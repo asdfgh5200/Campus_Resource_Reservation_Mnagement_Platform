@@ -30,6 +30,7 @@
           </template>
           <el-menu-item index="/admin/dashboard">数据概览</el-menu-item>
           <el-menu-item index="/admin/resources">资源管理</el-menu-item>
+          <el-menu-item index="/admin/timetable">课表管理</el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>

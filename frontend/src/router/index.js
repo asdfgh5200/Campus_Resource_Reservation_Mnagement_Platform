@@ -13,7 +13,8 @@ const routes = [
       { path: 'resource/:id', name: 'ResourceDetail', component: () => import('@/views/user/ResourceDetail.vue'), meta: { title: '资源详情' } },
       { path: 'my-reservations', name: 'MyReservations', component: () => import('@/views/user/MyReservations.vue'), meta: { title: '我的预约' } },
       { path: 'admin/dashboard', name: 'AdminDashboard', component: () => import('@/views/admin/Dashboard.vue'), meta: { title: '数据概览', admin: true } },
-      { path: 'admin/resources', name: 'AdminResources', component: () => import('@/views/admin/ResourceManage.vue'), meta: { title: '资源管理', admin: true } }
+      { path: 'admin/resources', name: 'AdminResources', component: () => import('@/views/admin/ResourceManage.vue'), meta: { title: '资源管理', admin: true } },
+      { path: 'admin/timetable', name: 'AdminTimetable', component: () => import('@/views/admin/TimetableManage.vue'), meta: { title: '课表管理', admin: true } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/home' }

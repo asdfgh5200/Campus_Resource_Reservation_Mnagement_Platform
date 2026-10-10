@@ -67,30 +67,57 @@
                 value-format="YYYY-MM-DD"
                 :disabled-date="disabledDate"
                 style="width: 100%"
+                @change="loadAvailability"
               />
             </el-form-item>
-            <el-form-item label="开始时间">
-              <el-time-select
-                v-model="form.startTime"
-                :max-time="form.endTime"
-                placeholder="选择开始时间"
-                start="08:00"
-                step="00:30"
-                end="22:00"
-                style="width: 100%"
-              />
-            </el-form-item>
-            <el-form-item label="结束时间">
-              <el-time-select
-                v-model="form.endTime"
-                :min-time="form.startTime"
-                placeholder="选择结束时间"
-                start="08:30"
-                step="00:30"
-                end="22:00"
-                style="width: 100%"
-              />
-            </el-form-item>
+          </el-form>
+
+          <!-- 时段网格 -->
+          <div v-if="form.date" class="slot-section">
+            <div class="slot-legend">
+              <span class="legend-item"><i class="dot available"></i> 可预约</span>
+              <span class="legend-item"><i class="dot occupied"></i> 已占用</span>
+              <span class="legend-item"><i class="dot selected"></i> 已选择</span>
+            </div>
+
+            <div v-if="loadingSlots" class="slot-loading">
+              <el-icon class="is-loading"><Loading /></el-icon> 加载时段中...
+            </div>
+
+            <div v-else-if="slots.length" class="slot-grid">
+              <div
+                v-for="slot in slots"
+                :key="slot.time"
+                class="slot-cell"
+                :class="{
+                  'is-available': slot.available && !isSlotSelected(slot),
+                  'is-occupied': !slot.available,
+                  'is-selected': isSlotSelected(slot)
+                }"
+                @click="onSlotClick(slot)"
+              >
+                <div class="slot-time">{{ slot.time }}</div>
+                <div v-if="!slot.available" class="slot-reason" :title="slot.reason">{{ slot.reason }}</div>
+                <div v-else-if="isSlotSelected(slot)" class="slot-check">
+                  <el-icon><Check /></el-icon>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="slot-empty">该日无可预约时段</div>
+
+            <!-- 已选时段信息 -->
+            <div v-if="selectedRange.start && selectedRange.end" class="selected-info">
+              <el-alert type="success" :closable="false" show-icon>
+                <template #title>
+                  已选时段：{{ selectedRange.start.time }} - {{ addMinutes(selectedRange.end.time, 30) }}
+                  （{{ selectedDuration }} 分钟）
+                </template>
+              </el-alert>
+            </div>
+          </div>
+
+          <el-form :model="form" label-width="100px" size="default" style="margin-top: 16px;">
             <el-form-item label="打卡方式">
               <el-radio-group v-model="form.checkinType">
                 <el-radio :value="1">定位打卡</el-radio>
@@ -113,8 +140,9 @@
               <template #title>预约须知</template>
               <ul class="tips-list">
                 <li>单次预约时长上限 {{ resource.maxDuration }} 分钟</li>
+                <li>时段按 30 分钟粒度切分，点击起止时段即可选择连续区间</li>
+                <li>灰色时段为全校课表占用或已被他人预约，不可选择</li>
                 <li>请在预约开始后 15 分钟内完成打卡，否则将记录违规</li>
-                <li>预约时间冲突时系统会自动拒绝</li>
               </ul>
             </el-alert>
           </div>
@@ -129,7 +157,7 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowLeft, OfficeBuilding, Position, User, Clock, Timer, Document, Calendar
+  ArrowLeft, OfficeBuilding, Position, User, Clock, Timer, Document, Calendar, Loading, Check
 } from '@element-plus/icons-vue'
 import { mockApi } from '@/api/mock'
 
@@ -142,11 +170,14 @@ const resource = ref(null)
 
 const form = reactive({
   date: '',
-  startTime: '',
-  endTime: '',
   checkinType: 1,
   remark: ''
 })
+
+// 时段网格相关
+const slots = ref([])
+const loadingSlots = ref(false)
+const selectedRange = reactive({ start: null, end: null })
 
 const typeImages = {
   1: '/assets/type-classroom.png',
@@ -181,27 +212,103 @@ async function loadData() {
   }
 }
 
+// 加载某日可用时段
+async function loadAvailability() {
+  if (!form.date || !resource.value) return
+  selectedRange.start = null
+  selectedRange.end = null
+  loadingSlots.value = true
+  try {
+    const res = await mockApi.getAvailability(resource.value.id, form.date)
+    if (res.code === 200) {
+      slots.value = res.data.slots
+    }
+  } finally {
+    loadingSlots.value = false
+  }
+}
+
+// 已选时长
+const selectedDuration = computed(() => {
+  if (!selectedRange.start || !selectedRange.end) return 0
+  return selectedRange.end.endMin - selectedRange.start.startMin
+})
+
+// 判断某时段是否在已选区间内
+function isSlotSelected(slot) {
+  if (!selectedRange.start || !selectedRange.end) return false
+  return slot.startMin >= selectedRange.start.startMin && slot.endMin <= selectedRange.end.endMin
+}
+
+// 点击时段：选起点或终点
+function onSlotClick(slot) {
+  if (!slot.available) return
+  if (!selectedRange.start) {
+    selectedRange.start = slot
+    selectedRange.end = slot
+    return
+  }
+  // 第二次点击：若点击已选起点则取消
+  if (selectedRange.start && selectedRange.start.time === slot.time) {
+    selectedRange.start = null
+    selectedRange.end = null
+    return
+  }
+  // 确保区间内全是可用时段
+  const lo = slot.startMin < selectedRange.start.startMin ? slot : selectedRange.start
+  const hi = slot.startMin < selectedRange.start.startMin ? selectedRange.start : slot
+  const between = slots.value.filter(s => s.startMin >= lo.startMin && s.endMin <= hi.endMin)
+  const allAvail = between.every(s => s.available)
+  if (!allAvail) {
+    ElMessage.warning('所选区间包含已占用时段，请重新选择')
+    selectedRange.start = slot
+    selectedRange.end = slot
+    return
+  }
+  selectedRange.start = lo
+  selectedRange.end = hi
+
+  // 校验时长上限
+  const dur = selectedRange.end.endMin - selectedRange.start.startMin
+  if (dur > resource.value.maxDuration) {
+    ElMessage.warning(`单次预约时长不能超过 ${resource.value.maxDuration} 分钟，已自动截断`)
+    // 截断：保留起点，向后取 maxDuration 对应的可用片数
+    const maxSlots = Math.floor(resource.value.maxDuration / 30)
+    const availFromStart = slots.value.filter(s => s.startMin >= selectedRange.start.startMin && s.available)
+    const valid = availFromStart.slice(0, maxSlots)
+    selectedRange.end = valid[valid.length - 1]
+  }
+}
+
+// 时间字符串加分钟
+function addMinutes(timeStr, mins) {
+  const [h, m] = timeStr.split(':').map(Number)
+  const total = h * 60 + m + mins
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
 async function submitReservation() {
   if (!form.date) { ElMessage.warning('请选择预约日期'); return }
-  if (!form.startTime) { ElMessage.warning('请选择开始时间'); return }
-  if (!form.endTime) { ElMessage.warning('请选择结束时间'); return }
-
-  // 计算时长
-  const [sh, sm] = form.startTime.split(':').map(Number)
-  const [eh, em] = form.endTime.split(':').map(Number)
-  const duration = (eh * 60 + em) - (sh * 60 + sm)
-  if (duration <= 0) { ElMessage.warning('结束时间必须晚于开始时间'); return }
-  if (duration > resource.value.maxDuration) {
+  if (!selectedRange.start || !selectedRange.end) {
+    ElMessage.warning('请在时段网格中选择预约时段')
+    return
+  }
+  const dur = selectedRange.end.endMin - selectedRange.start.startMin
+  if (dur <= 0) { ElMessage.warning('请选择有效的预约时段'); return }
+  if (dur > resource.value.maxDuration) {
     ElMessage.warning(`单次预约时长不能超过 ${resource.value.maxDuration} 分钟`)
     return
   }
+
+  const startTime = `${form.date} ${selectedRange.start.time}:00`
+  const endTime = `${form.date} ${addMinutes(selectedRange.end.time, 30)}:00`
 
   submitting.value = true
   try {
     const res = await mockApi.createReservation({
       resourceId: resource.value.id,
-      startTime: `${form.date} ${form.startTime}:00`,
-      endTime: `${form.date} ${form.endTime}:00`,
+      startTime,
+      endTime,
       checkinType: form.checkinType,
       remark: form.remark
     })
@@ -213,11 +320,12 @@ async function submitReservation() {
       }).then(() => {
         router.push('/my-reservations')
       }).catch(() => {})
-      // 重置表单
+      // 重置
       form.date = ''
-      form.startTime = ''
-      form.endTime = ''
       form.remark = ''
+      slots.value = []
+      selectedRange.start = null
+      selectedRange.end = null
     } else {
       ElMessage.error(res.message)
     }
@@ -329,4 +437,85 @@ onMounted(() => loadData())
 
 .reserve-tips { margin-top: 8px; }
 .tips-list { margin: 4px 0 0 16px; font-size: 13px; line-height: 1.8; }
+
+/* 时段网格 */
+.slot-section { margin-top: 4px; }
+
+.slot-legend {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: #606266;
+}
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-item .dot {
+  width: 12px; height: 12px; border-radius: 3px; display: inline-block;
+}
+.legend-item .dot.available { background: #67c23a; }
+.legend-item .dot.occupied { background: #c0c4cc; }
+.legend-item .dot.selected { background: #667eea; }
+
+.slot-loading { padding: 30px; text-align: center; color: #909399; }
+.slot-empty { padding: 30px; text-align: center; color: #c0c4cc; font-size: 14px; }
+
+.slot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+  gap: 10px;
+}
+
+.slot-cell {
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 10px 6px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+  min-height: 52px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.slot-cell .slot-time {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+.slot-cell .slot-reason {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-cell .slot-check { color: #fff; font-size: 18px; }
+
+.slot-cell.is-available {
+  background: #f0f9eb;
+  border-color: #e1f3d8;
+}
+.slot-cell.is-available:hover {
+  border-color: #67c23a;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(103, 194, 58, 0.25);
+}
+
+.slot-cell.is-occupied {
+  background: #f4f4f5;
+  border-color: #e9e9eb;
+  cursor: not-allowed;
+}
+.slot-cell.is-occupied .slot-time { color: #909399; }
+
+.slot-cell.is-selected {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  border-color: #667eea;
+}
+.slot-cell.is-selected .slot-time { color: #fff; }
+.slot-cell.is-selected:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); }
+
+.selected-info { margin-top: 14px; }
 </style>

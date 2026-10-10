@@ -118,6 +118,61 @@ function genResources() {
 
 const resources = genResources()
 
+// ======== 全校课表数据 ========
+// 学校课时块（每节45分钟，含课间）
+const courseBlocks = [
+  { label: '上午1-2节', start: '08:00', end: '09:35' },
+  { label: '上午3-4节', start: '09:55', end: '11:30' },
+  { label: '上午连堂', start: '09:35', end: '12:20' },
+  { label: '下午1-2节', start: '14:00', end: '15:35' },
+  { label: '下午连堂', start: '14:00', end: '16:25' },
+  { label: '下午3-4节', start: '16:45', end: '18:20' },
+  { label: '晚上1-2节', start: '19:00', end: '20:35' },
+  { label: '晚上连堂', start: '19:00', end: '21:25' }
+]
+
+const courseNames = [
+  '高等数学', '大学英语', '线性代数', '数据结构', '操作系统',
+  '计算机网络', '数据库原理', '软件工程', '机器学习', '编译原理',
+  '大学物理', '有机化学', '细胞生物学', '材料力学', '电路分析'
+]
+
+const teacherNames = ['王教授', '李教授', '张教授', '刘教授', '陈教授', '赵教授']
+
+// 给约30%的教室和实验室排课（周一至周五）
+function genTimetable() {
+  const list = []
+  let id = 1
+  // 只对教室(type=1)和实验室(type=2)排课
+  const targets = resources.filter(r => r.resourceType === 1 || r.resourceType === 2)
+  for (const r of targets) {
+    // 每个资源随机排 3-8 节课
+    const count = 3 + Math.floor(Math.random() * 6)
+    const used = new Set()
+    for (let i = 0; i < count; i++) {
+      const day = 1 + Math.floor(Math.random() * 5) // 1-5 周一到周五
+      const block = courseBlocks[Math.floor(Math.random() * courseBlocks.length)]
+      const key = `${r.id}|${day}|${block.start}`
+      if (used.has(key)) continue
+      used.add(key)
+      list.push({
+        id: id++,
+        resourceId: r.id,
+        dayOfWeek: day,
+        startTime: block.start,
+        endTime: block.end,
+        courseName: courseNames[Math.floor(Math.random() * courseNames.length)],
+        teacher: teacherNames[Math.floor(Math.random() * teacherNames.length)],
+        semester: '2026-2027-1'
+      })
+    }
+  }
+  return list
+}
+
+let timetableEntries = genTimetable()
+let nextTimetableId = timetableEntries.length + 1
+
 // ======== 预约数据 ========
 let reservations = [
   { id: 1, userId: 2, resourceId: 1, startTime: '2026-09-24 10:00:00', endTime: '2026-09-24 12:00:00', checkinType: 1, checkinFlag: 0, remark: '小组讨论', status: 1, createdAt: '2026-09-23 15:30:00' },
@@ -213,6 +268,156 @@ export const mockApi = {
     if (!r) return reject('资源不存在', 404)
     r.status = Number(status)
     return delay(resolve(r))
+  },
+
+  // 查询资源某日的可用时段
+  getAvailability(resourceId, date) {
+    const r = resources.find(x => x.id === Number(resourceId))
+    if (!r) return reject('资源不存在', 404)
+
+    const d = new Date(date)
+    const dayOfWeek = d.getDay() === 0 ? 7 : d.getDay() // 1-7 周一到周日
+
+    // 生成 30 分钟粒度的时间片
+    const slots = []
+    const [oh, om] = r.openTime.split(':').map(Number)
+    const [ch, cm] = r.closeTime.split(':').map(Number)
+    const openMin = oh * 60 + om
+    const closeMin = ch * 60 + cm
+    for (let m = openMin; m < closeMin; m += 30) {
+      const h = Math.floor(m / 60)
+      const mm = m % 60
+      slots.push({
+        time: `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
+        startMin: m,
+        endMin: m + 30,
+        available: true,
+        reason: ''
+      })
+    }
+
+    // 时间冲突判定 helper
+    const overlap = (s1, e1, s2, e2) => s1 < e2 && s2 < e1
+
+    // 标记课表占用
+    const tts = timetableEntries.filter(t => t.resourceId === r.id && t.dayOfWeek === dayOfWeek)
+    for (const slot of slots) {
+      for (const t of tts) {
+        const [tsh, tsm] = t.startTime.split(':').map(Number)
+        const [teh, tem] = t.endTime.split(':').map(Number)
+        if (overlap(slot.startMin, slot.endMin, tsh * 60 + tsm, teh * 60 + tem)) {
+          slot.available = false
+          slot.reason = `${t.courseName}（${t.teacher}）`
+          break
+        }
+      }
+    }
+
+    // 标记已有预约占用
+    const dateStr = date
+    const resvs = reservations.filter(rv => rv.resourceId === r.id && rv.startTime.startsWith(dateStr))
+    for (const slot of slots) {
+      if (!slot.available) continue
+      for (const rv of resvs) {
+        const [, rs] = rv.startTime.split(' ')
+        const [, re] = rv.endTime.split(' ')
+        const [rsh, rsm] = rs.split(':').map(Number)
+        const [reh, rem] = re.split(':').map(Number)
+        if (overlap(slot.startMin, slot.endMin, rsh * 60 + rsm, reh * 60 + rem)) {
+          slot.available = false
+          slot.reason = '已被预约'
+          break
+        }
+      }
+    }
+
+    return delay(resolve({ resourceId: r.id, date, slots }))
+  },
+
+  // 获取课表列表
+  getTimetable({ resourceId, dayOfWeek, keyword } = {}) {
+    let list = timetableEntries.slice()
+    if (resourceId) list = list.filter(t => t.resourceId === Number(resourceId))
+    if (dayOfWeek) list = list.filter(t => t.dayOfWeek === Number(dayOfWeek))
+    if (keyword) {
+      const kw = keyword.toLowerCase()
+      list = list.filter(t =>
+        t.courseName.toLowerCase().includes(kw) ||
+        t.teacher.toLowerCase().includes(kw)
+      )
+    }
+    // 按 resourceId + dayOfWeek + startTime 排序
+    list.sort((a, b) => {
+      if (a.resourceId !== b.resourceId) return a.resourceId - b.resourceId
+      if (a.dayOfWeek !== b.dayOfWeek) return a.dayOfWeek - b.dayOfWeek
+      return a.startTime.localeCompare(b.startTime)
+    })
+    return delay(resolve(list))
+  },
+
+  // 新增单条课表
+  addTimetableEntry(data) {
+    const r = resources.find(x => x.id === Number(data.resourceId))
+    if (!r) return reject('资源不存在', 404)
+    const entry = {
+      id: nextTimetableId++,
+      resourceId: Number(data.resourceId),
+      dayOfWeek: Number(data.dayOfWeek),
+      startTime: data.startTime,
+      endTime: data.endTime,
+      courseName: data.courseName,
+      teacher: data.teacher || '',
+      semester: data.semester || '2026-2027-1'
+    }
+    timetableEntries.push(entry)
+    return delay(resolve(entry))
+  },
+
+  // 批量导入课表
+  // 支持 TSV/CSV 格式：resourceId, dayOfWeek, startTime, endTime, courseName, teacher
+  batchImportTimetable(text) {
+    const lines = text.trim().split('\n').filter(l => l.trim())
+    const errors = []
+    const added = []
+    for (let i = 0; i < lines.length; i++) {
+      const parts = lines[i].split(/[\t,]/).map(s => s.trim())
+      if (parts.length < 5) {
+        errors.push(`第 ${i + 1} 行：字段不足（需 resourceId,星期,开始,结束,课程名,教师）`)
+        continue
+      }
+      const [resourceId, dayOfWeek, startTime, endTime, courseName, teacher = ''] = parts
+      const r = resources.find(x => x.id === Number(resourceId))
+      if (!r) { errors.push(`第 ${i + 1} 行：资源 ${resourceId} 不存在`); continue }
+      const day = Number(dayOfWeek)
+      if (day < 1 || day > 7) { errors.push(`第 ${i + 1} 行：星期需 1-7`); continue }
+      const entry = {
+        id: nextTimetableId++,
+        resourceId: Number(resourceId),
+        dayOfWeek: day,
+        startTime,
+        endTime,
+        courseName,
+        teacher,
+        semester: '2026-2027-1'
+      }
+      timetableEntries.push(entry)
+      added.push(entry)
+    }
+    return delay(resolve({ added: added.length, errors }))
+  },
+
+  // 删除课表条目
+  deleteTimetableEntry(id) {
+    const idx = timetableEntries.findIndex(t => t.id === Number(id))
+    if (idx === -1) return reject('课表条目不存在', 404)
+    timetableEntries.splice(idx, 1)
+    return delay(resolve(null))
+  },
+
+  // 清空某资源课表
+  clearTimetableByResource(resourceId) {
+    timetableEntries = timetableEntries.filter(t => t.resourceId !== Number(resourceId))
+    return delay(resolve(null))
   },
 
   // 创建预约
