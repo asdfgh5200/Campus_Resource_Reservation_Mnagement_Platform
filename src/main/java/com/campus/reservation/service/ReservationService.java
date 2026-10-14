@@ -21,7 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -37,6 +36,8 @@ public class ReservationService {
 
     /** 信用分低于该值限制预约 */
     public static final int CREDIT_THRESHOLD = 60;
+    /** 一周内违规次数达到该值，本周内禁止预约 */
+    public static final int WEEKLY_VIOLATION_LIMIT = 3;
     /** 可提前打卡的分钟数（预约开始前） */
     public static final int CHECKIN_ADVANCE_MINUTES = 30;
     /** 开始后仍可打卡的分钟数，超过则自动爽约并释放空间 */
@@ -82,6 +83,15 @@ public class ReservationService {
         if (user.getCreditScore() != null && user.getCreditScore() < CREDIT_THRESHOLD) {
             throw BizException.forbidden("信用分不足，暂无法预约");
         }
+        // 一周内违规达 3 次 → 本周内禁止预约
+        Long weekViolations = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
+                .eq(Violation::getUserId, userId)
+                .eq(Violation::getStatus, 1)
+                .ge(Violation::getCreatedAt, LocalDateTime.now().minusDays(7)));
+        if (weekViolations != null && weekViolations >= WEEKLY_VIOLATION_LIMIT) {
+            throw BizException.forbidden(String.format(
+                    "近 7 天内已有 %d 次违规记录，本周内暂无法预约", weekViolations));
+        }
         Resource resource = resourceMapper.selectById(dto.getResourceId());
         if (resource == null) {
             throw BizException.notFound("资源不存在");
@@ -111,9 +121,19 @@ public class ReservationService {
                 || end.toLocalTime().isAfter(resource.getCloseTime())) {
             throw BizException.badRequest("预约时段需在开放时间内（" + resource.getOpenTime() + " - " + resource.getCloseTime() + "）");
         }
-        long minutes = Duration.between(start, end).toMinutes();
-        if (resource.getMaxDuration() != null && minutes > resource.getMaxDuration()) {
-            throw BizException.badRequest("单次预约时长不能超过 " + resource.getMaxDuration() + " 分钟");
+
+        // 同一用户在**同一时间段**内只能有一个进行中的预约（跨资源按时间冲突判定；不冲突可多次预约）
+        List<Reservation> mine = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
+                .eq(Reservation::getUserId, userId)
+                .in(Reservation::getStatus, List.of(Reservation.STATUS_PENDING, Reservation.STATUS_IN_USE))
+                .lt(Reservation::getStartTime, end)
+                .gt(Reservation::getEndTime, start));
+        if (!mine.isEmpty()) {
+            Reservation other = mine.get(0);
+            Resource otherRes = resourceMapper.selectById(other.getResourceId());
+            throw BizException.conflict(String.format("该时间段你已有预约：%s %s ~ %s，同一时间只能预约一个资源",
+                    otherRes == null ? "其他资源" : otherRes.getName(),
+                    other.getStartTime().format(LOG_TIME_FMT), other.getEndTime().format(LOG_TIME_FMT)));
         }
 
         // 节假日校验

@@ -145,6 +145,7 @@ import { ArrowLeft, Search, Location, User, Clock, School, Tools, Reading, Troph
 import { api } from '@/api'
 import { useUserStore } from '@/stores/user'
 import LibrarySeatMap from '@/components/LibrarySeatMap.vue'
+import { resourceImage } from '@/utils/resourceImage'
 
 const route = useRoute()
 const router = useRouter()
@@ -240,21 +241,9 @@ const pagedGroups = computed(() => {
   return groupedResources.value.slice(start, start + groupsPerPage)
 })
 
-// 体育馆各场馆对应图片
-const gymImageMap = {
-  '游泳馆': '/assets/gym-swimming.png',
-  '乒乓球馆': '/assets/gym-tabletennis.png',
-  '篮球场': '/assets/gym-basketball.png',
-  '羽毛球场': '/assets/gym-badminton.png',
-  '网球场': '/assets/gym-tennis.png',
-  '排球场': '/assets/gym-volleyball.png'
-}
-
+// 卡片配图：与详情页共用同一套规则（体育馆按场馆名取实拍图）
 function getVenueImage(item) {
-  if (Number(route.params.type) === 4) {
-    return gymImageMap[item.name] || catInfo.value.image
-  }
-  return catInfo.value.image
+  return resourceImage(item)
 }
 
 function statusText(s) { return { 1: '可预约', 2: '使用中', 3: '维修中' }[s] || '未知' }
@@ -359,7 +348,7 @@ function switchLibFloor(f) {
   loadData()
 }
 
-// 点击座位：维修中仅提示，其余进入预约详情（与实验室等按时段预约一致）
+// 点击座位：维修中仅提示；被他人占用时不可进入（仅显示对方时段与备注）；其余进入预约详情
 function onSeatSelect(item) {
   if (item.status === 3) {
     Object.assign(blockInfo, {
@@ -370,6 +359,10 @@ function onSeatSelect(item) {
       remark: ''
     })
     blockDialogVisible.value = true
+    return
+  }
+  if (!userStore.isAdmin && item.reserved && !item.reservedByMe) {
+    showOccupied(item, '该座位已被他人预约')
     return
   }
   goDetail(item.id)
@@ -385,6 +378,18 @@ const blockInfo = reactive({ type: '', title: '', resourceName: '', timeRange: '
 
 function fmt(dt) {
   return dt ? String(dt).replace('T', ' ').slice(0, 16) : ''
+}
+
+// 被他人占用：普通用户不可进入，仅提示对方的预约时段与备注（管理员不受限）
+function showOccupied(item, title = '该资源已被他人占用') {
+  Object.assign(blockInfo, {
+    type: 'occupied',
+    title,
+    resourceName: item.name,
+    timeRange: `${fmt(item.reservedStart)} ~ ${fmt(item.reservedEnd)}`,
+    remark: item.reservedRemark || ''
+  })
+  blockDialogVisible.value = true
 }
 
 function onRoomClick(item) {
@@ -404,21 +409,14 @@ function onRoomClick(item) {
     blockDialogVisible.value = true
     return
   }
-  // 体育馆可多人同时预约；实验室按时段独占（只锁已约时段）
-  // 两者都允许进入详情页查看时段条并预约其他时段
-  if (isGymType.value || isLabType.value) {
+  // 体育馆可多人同时预约，任何用户都可进入
+  if (isGymType.value) {
     goDetail(item.id)
     return
   }
+  // 实验室 / 图书馆座位：被他人占用时不可进入，仅提示备注信息
   if (item.reserved && !item.reservedByMe) {
-    Object.assign(blockInfo, {
-      type: 'occupied',
-      title: '该空间已被他人预约',
-      resourceName: item.name,
-      timeRange: `${fmt(item.reservedStart)} ~ ${fmt(item.reservedEnd)}`,
-      remark: item.reservedRemark || ''
-    })
-    blockDialogVisible.value = true
+    showOccupied(item, '该资源已被他人预约')
     return
   }
   goDetail(item.id)

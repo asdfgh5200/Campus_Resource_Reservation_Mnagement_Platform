@@ -170,6 +170,11 @@ export const api = {
     return request.get('/violations', { params })
   },
 
+  // 我的违规概览（近 7 天次数 / 累计次数 / 是否被限制预约）
+  getMyViolationSummary() {
+    return request.get('/violations/summary')
+  },
+
   // 维修工单
   createRepair(data) {
     return request.post('/repairs', data)
@@ -205,6 +210,11 @@ export const api = {
   // 管理端：预约操作日志
   getAdminReservationLogs(params) {
     return request.get('/admin/reservations/logs', { params })
+  },
+
+  // 管理端：按用户聚合的违规情况（支持关键词搜索）
+  getAdminViolationUsers(params) {
+    return request.get('/admin/violations/users', { params })
   }
 }
 

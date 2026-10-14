@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/violations")
 @RequiredArgsConstructor
@@ -29,6 +31,12 @@ public class ViolationController {
         UserContext.LoginUser ctx = UserContext.get();
         Long effective = (ctx != null && ctx.getRole() != null && ctx.getRole() == 1) ? userId : ctx.getUserId();
         return Result.ok(violationService.page(effective, current, size));
+    }
+
+    /** 我的违规概览（近 7 天次数 / 累计次数 / 是否被限制预约） */
+    @GetMapping("/summary")
+    public Result<Map<String, Object>> summary() {
+        return Result.ok(violationService.mySummary(UserContext.requireUserId()));
     }
 
     /** 手动登记违规（管理员） */

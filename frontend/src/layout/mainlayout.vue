@@ -32,6 +32,7 @@
           <el-menu-item index="/admin/reservations">预约管理</el-menu-item>
           <el-menu-item index="/admin/resources">资源管理</el-menu-item>
           <el-menu-item index="/admin/courses">课表管理</el-menu-item>
+          <el-menu-item index="/admin/violations">违规管理</el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>
@@ -59,7 +60,10 @@
             </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="logout">
+                <el-dropdown-item command="profile">
+                  <el-icon><User /></el-icon>我的
+                </el-dropdown-item>
+                <el-dropdown-item command="logout" divided>
                   <el-icon><SwitchButton /></el-icon>退出登录
                 </el-dropdown-item>
               </el-dropdown-menu>
@@ -111,6 +115,8 @@ function onCommand(cmd) {
   if (cmd === 'logout') {
     userStore.logout()
     router.push('/login')
+  } else if (cmd === 'profile') {
+    router.push('/profile')
   }
 }
 </script>
@@ -121,7 +127,7 @@ function onCommand(cmd) {
 }
 
 .sidebar {
-  background: linear-gradient(180deg, #1a2b4a 0%, #0d1b2e 100%);
+  background: linear-gradient(180deg, #123A6B 0%, #0A1F3C 100%);
   transition: width 0.3s;
   overflow: hidden;
 
@@ -147,7 +153,7 @@ function onCommand(cmd) {
       &:hover { background-color: rgba(255, 255, 255, 0.06) !important; }
     }
     :deep(.el-menu-item.is-active) {
-      background: linear-gradient(90deg, #409eff 0%, #337ecc 100%) !important;
+      background: linear-gradient(90deg, #2E76DB 0%, #144E9C 100%) !important;
     }
   }
 }
@@ -198,7 +204,7 @@ function onCommand(cmd) {
       outline: none;
 
       .avatar {
-        background: linear-gradient(135deg, #409eff, #67c23a);
+        background: linear-gradient(135deg, #2E76DB, #74B9F5);
         color: #fff;
         font-weight: 600;
       }

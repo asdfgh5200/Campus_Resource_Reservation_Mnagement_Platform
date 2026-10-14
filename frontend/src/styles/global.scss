@@ -4,6 +4,23 @@
   box-sizing: border-box;
 }
 
+/* 校园管理配色：全局蓝色主题（覆盖 Element Plus 主色） */
+:root {
+  --el-color-primary: #1E62D0;
+  --el-color-primary-light-3: #6291DE;
+  --el-color-primary-light-5: #8FB0E8;
+  --el-color-primary-light-7: #BBD0F1;
+  --el-color-primary-light-8: #D2E0F6;
+  --el-color-primary-light-9: #E8EFFA;
+  --el-color-primary-dark-2: #184EA6;
+
+  --campus-blue-deep: #144E9C;
+  --campus-blue: #2E76DB;
+  --campus-blue-light: #4E9BF0;
+  --campus-blue-lighter: #74B9F5;
+  --campus-navy: #123A6B;
+}
+
 html, body, #app {
   height: 100%;
   font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',

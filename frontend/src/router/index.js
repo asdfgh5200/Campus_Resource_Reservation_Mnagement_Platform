@@ -12,10 +12,12 @@ const routes = [
       { path: 'category/:type', name: 'CategoryDetail', component: () => import('@/views/user/CategoryDetail.vue'), meta: { title: '资源列表' } },
       { path: 'resource/:id', name: 'ResourceDetail', component: () => import('@/views/user/ResourceDetail.vue'), meta: { title: '资源详情' } },
       { path: 'my-reservations', name: 'MyReservations', component: () => import('@/views/user/MyReservations.vue'), meta: { title: '我的预约' } },
+      { path: 'profile', name: 'MyProfile', component: () => import('@/views/user/MyProfile.vue'), meta: { title: '我的' } },
       { path: 'admin/dashboard', name: 'AdminDashboard', component: () => import('@/views/admin/Dashboard.vue'), meta: { title: '数据概览', admin: true } },
       { path: 'admin/reservations', name: 'AdminReservations', component: () => import('@/views/admin/ReservationManage.vue'), meta: { title: '预约管理', admin: true } },
       { path: 'admin/resources', name: 'AdminResources', component: () => import('@/views/admin/ResourceManage.vue'), meta: { title: '资源管理', admin: true } },
-      { path: 'admin/courses', name: 'AdminCourses', component: () => import('@/views/admin/CourseManage.vue'), meta: { title: '课表管理', admin: true } }
+      { path: 'admin/courses', name: 'AdminCourses', component: () => import('@/views/admin/CourseManage.vue'), meta: { title: '课表管理', admin: true } },
+      { path: 'admin/violations', name: 'AdminViolations', component: () => import('@/views/admin/ViolationManage.vue'), meta: { title: '违规管理', admin: true } }
     ]
   },
   { path: '/:pathMatch(.*)*', redirect: '/home' }

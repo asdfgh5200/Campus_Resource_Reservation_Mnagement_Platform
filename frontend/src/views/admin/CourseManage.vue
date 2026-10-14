@@ -23,33 +23,60 @@
         <template #title>教室不参与预约，仅用于展示课表占用。用户端会在对应时段把教室标红，点击可查看课程安排。</template>
       </el-alert>
 
-      <!-- 表格 -->
-      <el-table v-loading="loading" :data="courses" stripe style="width: 100%">
-        <el-table-column label="教室" min-width="150">
-          <template #default="{ row }">{{ row.roomName }}</template>
-        </el-table-column>
-        <el-table-column label="楼栋/楼层" width="150">
-          <template #default="{ row }">{{ row.building }} {{ row.floor }}</template>
-        </el-table-column>
-        <el-table-column label="星期" width="90">
-          <template #default="{ row }">{{ dayText(row.dayOfWeek) }}</template>
-        </el-table-column>
-        <el-table-column label="上课时间" width="180">
-          <template #default="{ row }">{{ short(row.startTime) }} - {{ short(row.endTime) }}</template>
-        </el-table-column>
-        <el-table-column label="课程名称" min-width="160" prop="courseName" />
-        <el-table-column label="任课教师" width="120">
-          <template #default="{ row }">{{ row.teacher || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }">
-            <el-button text type="danger" :icon="Delete" @click="doDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <!-- 概览 -->
+      <div class="sum-row">
+        <div class="sum"><b>{{ courses.length }}</b><span>课表条数</span></div>
+        <div class="sum"><b>{{ roomCount }}</b><span>涉及教室</span></div>
+        <div class="sum"><b>{{ courseCount }}</b><span>课程门数</span></div>
+      </div>
 
-      <el-empty v-if="!loading && courses.length === 0" description="暂无课表记录，可点击「批量导入」或「手动填写」" />
+      <!-- 文档式入口：不再把上千条记录直接铺在页面上 -->
+      <div class="doc-entry">
+        <div class="doc-icon"><el-icon :size="26"><Document /></el-icon></div>
+        <div class="doc-text">
+          <h3>课表文档</h3>
+          <p>
+            全部课表已按「教室 → 星期」整理成一份文档，共 {{ courses.length }} 条记录。
+            点击右侧按钮查阅，避免整页堆砌表格。
+          </p>
+        </div>
+        <el-button type="primary" round size="large" @click="openDoc">查看课表文档</el-button>
+      </div>
     </el-card>
+
+    <!-- 课表文档 -->
+    <el-drawer v-model="docVisible" title="武汉理工大学课表" size="72%" :destroy-on-close="true">
+      <template #header>
+        <div class="doc-header">
+          <span class="doc-title">武汉理工大学课表</span>
+          <span class="doc-sub">
+            {{ filterBuilding || '全部楼栋' }} · {{ filterDay ? dayText(filterDay) : '周一~周日' }} ·
+            共 {{ courses.length }} 条
+          </span>
+        </div>
+      </template>
+
+      <div class="doc-body">
+        <el-empty v-if="docGroups.length === 0" description="暂无课表记录，可先「批量导入」" />
+        <section v-for="g in docGroups" :key="g.roomName" class="doc-room">
+          <h4 class="room-title">
+            <span class="room-name">{{ g.roomName }}</span>
+            <span class="room-meta">{{ g.building }} {{ g.floor }}</span>
+          </h4>
+          <div v-for="d in g.dayList" :key="d.day" class="doc-day">
+            <span class="day-label">{{ dayText(d.day) }}</span>
+            <div class="day-items">
+              <div v-for="c in d.items" :key="c.id" class="doc-item">
+                <span class="it-time">{{ short(c.startTime) }} - {{ short(c.endTime) }}</span>
+                <span class="it-course">{{ c.courseName }}</span>
+                <span class="it-teacher">{{ c.teacher || '—' }}</span>
+                <el-button text type="danger" size="small" :icon="Delete" @click="doDelete(c)" />
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </el-drawer>
 
     <!-- 手动填写 -->
     <el-dialog v-model="formVisible" title="填写课表" width="520px">
@@ -90,7 +117,7 @@
       <el-alert type="info" :closable="false" show-icon class="tip">
         <template #title>
           每行一条，格式：<b>教室,课程名称,星期,开始时间,结束时间,教师</b>（教师可省略）<br />
-          示例：A101,高等数学,1,08:00,09:40,张老师<br />
+          示例：A101,高等数学,1,08:00,09:35,张老师<br />
           星期可写 1~7 或 周一~周日；也可先选择 CSV/TXT 文件自动填入下方文本框。
         </template>
       </el-alert>
@@ -98,7 +125,7 @@
         <input ref="fileInput" type="file" accept=".csv,.txt" style="display: none" @change="onFilePicked" />
         <el-button :icon="Upload" @click="fileInput.click()">选择文件</el-button>
       </div>
-      <el-input v-model="importText" type="textarea" :rows="10" placeholder="A101,高等数学,1,08:00,09:40,张老师" />
+      <el-input v-model="importText" type="textarea" :rows="10" placeholder="A101,高等数学,1,08:00,09:35,张老师" />
       <template #footer>
         <el-button @click="importVisible = false">取消</el-button>
         <el-button type="primary" :loading="importing" @click="doImport">解析并导入</el-button>
@@ -108,8 +135,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
-import { Plus, Delete, Upload, Refresh } from '@element-plus/icons-vue'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { Plus, Delete, Upload, Refresh, Document } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
 
@@ -125,12 +152,44 @@ const formVisible = ref(false)
 const importVisible = ref(false)
 const importText = ref('')
 const fileInput = ref(null)
+const docVisible = ref(false)
 
 const form = reactive({ roomId: null, dayOfWeek: null, startTime: '', endTime: '', courseName: '', teacher: '', term: '' })
 
 const DAY_NAMES = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
 function dayText(d) { return DAY_NAMES[d - 1] || d }
 function short(t) { return t ? String(t).slice(0, 5) : '' }
+
+// 概览统计
+const roomCount = computed(() => new Set(courses.value.map(c => c.roomName)).size)
+const courseCount = computed(() => new Set(courses.value.map(c => c.courseName)).size)
+
+// 文档结构：教室 → 星期 → 课程条目
+const docGroups = computed(() => {
+  const map = new Map()
+  for (const c of courses.value) {
+    const key = c.roomName || `#${c.roomId}`
+    if (!map.has(key)) {
+      map.set(key, { roomName: key, building: c.building, floor: c.floor, days: new Map() })
+    }
+    const g = map.get(key)
+    if (!g.days.has(c.dayOfWeek)) g.days.set(c.dayOfWeek, [])
+    g.days.get(c.dayOfWeek).push(c)
+  }
+  return Array.from(map.values()).map(g => ({
+    roomName: g.roomName,
+    building: g.building,
+    floor: g.floor,
+    dayList: Array.from(g.days.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([day, items]) => ({
+        day,
+        items: items.slice().sort((x, y) => String(x.startTime).localeCompare(String(y.startTime)))
+      }))
+  })).sort((a, b) => String(a.roomName).localeCompare(String(b.roomName), 'zh'))
+})
+
+function openDoc() { docVisible.value = true }
 
 async function loadRooms() {
   const res = await api.getResourcePage({ current: 1, size: 500, type: 1 })
@@ -292,4 +351,71 @@ onMounted(async () => {
 .tip { margin-bottom: 16px; }
 
 .import-actions { margin: 12px 0 8px; }
+
+/* 概览 */
+.sum-row {
+  display: flex; gap: 12px; margin-bottom: 16px;
+  .sum {
+    flex: 1; text-align: center; padding: 14px 0; border-radius: 12px;
+    background: #f7f9fc; border: 1px solid #eef2f7;
+    b { display: block; font-size: 24px; font-weight: 800; color: #303133; }
+    span { font-size: 12px; color: #909399; }
+  }
+}
+
+/* 文档入口 */
+.doc-entry {
+  display: flex; align-items: center; gap: 16px;
+  padding: 20px 22px; border-radius: 14px;
+  background: linear-gradient(135deg, #eef5ff 0%, #f3fbf7 100%);
+  border: 1px solid #e3ecf9;
+  .doc-icon {
+    width: 52px; height: 52px; border-radius: 14px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; background: linear-gradient(135deg, #2E76DB, #74B9F5);
+  }
+  .doc-text {
+    flex: 1;
+    h3 { font-size: 16px; font-weight: 600; color: #303133; margin-bottom: 4px; }
+    p { font-size: 13px; color: #808894; line-height: 1.6; }
+  }
+}
+
+/* 文档正文 */
+.doc-header { display: flex; flex-direction: column;
+  .doc-title { font-size: 17px; font-weight: 600; color: #303133; }
+  .doc-sub { margin-top: 4px; font-size: 12px; color: #909399; }
+}
+
+.doc-body { padding: 4px 6px 24px; }
+
+.doc-room {
+  margin-bottom: 22px;
+  break-inside: avoid;
+
+  .room-title {
+    display: flex; align-items: baseline; gap: 10px;
+    padding-bottom: 6px; margin-bottom: 8px;
+    border-bottom: 2px solid #eef2f7;
+    .room-name { font-size: 15px; font-weight: 700; color: #303133; }
+    .room-meta { font-size: 12px; color: #909399; }
+  }
+
+  .doc-day {
+    display: flex; gap: 12px; padding: 3px 0;
+    .day-label {
+      flex: 0 0 44px; font-size: 13px; font-weight: 600; color: #409eff;
+      padding-top: 3px;
+    }
+    .day-items { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+    .doc-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 4px 8px; border-radius: 8px; font-size: 13px;
+      &:hover { background: #f7f9fc; }
+      .it-time { flex: 0 0 108px; color: #909399; font-variant-numeric: tabular-nums; }
+      .it-course { flex: 1; color: #303133; }
+      .it-teacher { flex: 0 0 80px; color: #a8abb2; }
+    }
+  }
+}
 </style>

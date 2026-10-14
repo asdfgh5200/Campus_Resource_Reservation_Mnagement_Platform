@@ -4,11 +4,17 @@
       <el-tab-pane label="全部" name="0" />
       <el-tab-pane label="待打卡" name="1" />
       <el-tab-pane label="使用中" name="2" />
-      <el-tab-pane label="已完成" name="3" />
+      <el-tab-pane label="已结束" name="3" />
       <el-tab-pane label="已取消" name="4" />
     </el-tabs>
 
     <div v-loading="loading" class="reservation-list">
+      <!-- 统一删除入口：不再逐条放「删除」按钮 -->
+      <div v-if="reservations.length" class="list-toolbar">
+        <span class="toolbar-hint">共 {{ reservations.length }} 条记录，其中 {{ deletableList.length }} 条可删除</span>
+        <el-button :icon="Delete" size="small" :disabled="deletableList.length === 0" @click="openCleanup">批量删除记录</el-button>
+      </div>
+
       <div
         v-for="item in reservations"
         :key="item.id"
@@ -16,7 +22,7 @@
         :class="{ clickable: item.status === 2 }"
         @click="onCardClick(item)"
       >
-        <div class="card-left" :style="{ backgroundImage: `url(${getTypeImage(item.resource?.resourceType)})` }">
+        <div class="card-left" :style="{ backgroundImage: `url(${getTypeImage(item.resource)})` }">
           <div class="card-left-overlay"></div>
         </div>
         <div class="card-content">
@@ -49,7 +55,6 @@
                 </template>
                 <el-button type="success" size="small" @click="doRelease(item)">提前释放</el-button>
               </template>
-              <el-button v-if="canDelete(item)" type="danger" size="small" plain :icon="Delete" @click="doDelete(item)">删除</el-button>
             </div>
           </div>
         </div>
@@ -57,6 +62,30 @@
     </div>
 
     <el-empty v-if="!loading && reservations.length === 0" description="暂无预约记录" />
+
+    <!-- 批量删除记录 -->
+    <el-dialog v-model="cleanupVisible" title="批量删除预约记录" width="560px">
+      <el-alert type="info" :closable="false" show-icon class="cleanup-tip">
+        <template #title>仅"已结束"的记录可删除（已结束 / 已取消 / 爽约 / 违规）；删除后不再显示，管理端仍保留操作日志。</template>
+      </el-alert>
+      <div class="cleanup-bar">
+        <el-checkbox v-model="cleanupAll" :indeterminate="cleanupIndeterminate" @change="onCleanupAllChange">全选</el-checkbox>
+      </div>
+      <el-checkbox-group v-model="selectedIds" class="cleanup-list">
+        <div v-for="item in deletableList" :key="item.id" class="cleanup-item">
+          <el-checkbox :value="item.id" />
+          <span class="ci-name">{{ item.resource?.name || '未知资源' }}</span>
+          <span class="ci-status">{{ statusText(item.status) }}</span>
+          <span class="ci-time">{{ item.startTime }} → {{ item.endTime }}</span>
+        </div>
+      </el-checkbox-group>
+      <template #footer>
+        <el-button @click="cleanupVisible = false">取消</el-button>
+        <el-button type="danger" :loading="cleanupLoading" :disabled="selectedIds.length === 0" @click="doCleanup">
+          删除选中（{{ selectedIds.length }}）
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -66,6 +95,7 @@ import { useRouter } from 'vue-router'
 import { Clock, CircleCheck, EditPen, Close, Timer, Delete, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
+import { resourceImage } from '@/utils/resourceImage'
 
 const router = useRouter()
 const loading = ref(false)
@@ -91,18 +121,12 @@ function fmtTime(dt) {
   return dt ? String(dt).replace('T', ' ').slice(11, 16) : ''
 }
 
-const typeImages = {
-  1: '/assets/type-classroom.png',
-  2: '/assets/type-lab.png',
-  3: '/assets/type-library.png',
-  4: '/assets/type-gym.png'
-}
+function getTypeImage(res) { return resourceImage(res) }
+function statusText(s) { return { 1: '待打卡', 2: '使用中', 3: '已结束', 4: '已取消', 5: '爽约', 6: '违规' }[s] || '未知' }
+// 配色：待打卡=黄、使用中=蓝、已结束/已取消=灰、爽约/违规=红
+function statusTagType(s) { return { 1: 'warning', 2: 'primary', 3: 'info', 4: 'info', 5: 'danger', 6: 'danger' }[s] || 'info' }
 
-function getTypeImage(t) { return typeImages[t] || typeImages[1] }
-function statusText(s) { return { 1: '待打卡', 2: '使用中', 3: '已完成', 4: '已取消', 5: '爽约', 6: '违规' }[s] || '未知' }
-function statusTagType(s) { return { 1: 'warning', 2: 'primary', 3: 'success', 4: 'info', 5: 'danger', 6: 'danger' }[s] || 'info' }
-
-// 可删除：仅限已结束的预约（已完成 / 已取消 / 爽约 / 违规）
+// 可删除：仅限已结束的预约（已结束 / 已取消 / 爽约 / 违规）
 function canDelete(item) { return [3, 4, 5, 6].includes(item.status) }
 
 // 使用中的预约：点击卡片跳转到该资源详情
@@ -154,18 +178,50 @@ async function doCancel(item) {
   } catch { /* cancelled */ }
 }
 
-async function doDelete(item) {
+// ---- 批量删除（统一入口）----
+const cleanupVisible = ref(false)
+const cleanupLoading = ref(false)
+const selectedIds = ref([])
+const cleanupAll = ref(false)
+const cleanupIndeterminate = computed(() =>
+  selectedIds.value.length > 0 && selectedIds.value.length < deletableList.value.length)
+
+const deletableList = computed(() => reservations.value.filter(canDelete))
+
+function openCleanup() {
+  selectedIds.value = []
+  cleanupAll.value = false
+  cleanupVisible.value = true
+}
+function onCleanupAllChange(val) {
+  selectedIds.value = val ? deletableList.value.map((r) => r.id) : []
+}
+async function doCleanup() {
+  if (selectedIds.value.length === 0) return
   try {
-    await ElMessageBox.confirm('删除后该条预约记录将不再显示（管理端仍保留操作日志），确定删除？', '删除预约记录', {
-      type: 'warning', confirmButtonText: '确定删除'
-    })
+    await ElMessageBox.confirm(
+      `确定删除选中的 ${selectedIds.value.length} 条预约记录？删除后不再显示，管理端仍保留操作日志。`,
+      '批量删除', { type: 'warning', confirmButtonText: '确定删除' }
+    )
   } catch { return }
-  const res = await api.deleteReservation(item.id)
-  if (res.code === 200) {
-    ElMessage.success('已删除')
+  cleanupLoading.value = true
+  try {
+    let ok = 0
+    const fails = []
+    for (const id of selectedIds.value) {
+      const res = await api.deleteReservation(id)
+      if (res.code === 200) ok++
+      else fails.push(res.message)
+    }
+    if (fails.length) {
+      ElMessage.warning(`成功删除 ${ok} 条，${fails.length} 条失败：${fails[0]}`)
+    } else {
+      ElMessage.success(`已删除 ${ok} 条记录`)
+    }
+    cleanupVisible.value = false
     loadData()
-  } else {
-    ElMessage.error(res.message)
+  } finally {
+    cleanupLoading.value = false
   }
 }
 
@@ -220,6 +276,27 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 .my-reservations-page { max-width: 900px; margin: 0 auto; }
 
 .reservation-list { display: flex; flex-direction: column; gap: 12px; }
+
+.list-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 4px;
+  .toolbar-hint { font-size: 13px; color: #909399; }
+}
+
+.cleanup-tip { margin-bottom: 10px; }
+.cleanup-bar { padding: 0 2px 6px; }
+.cleanup-list {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: 320px; overflow-y: auto;
+  .cleanup-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px; border-radius: 8px;
+    &:hover { background: #f5f7fa; }
+    .ci-name { flex: 1; font-size: 13px; color: #303133; }
+    .ci-status { font-size: 12px; color: #909399; }
+    .ci-time { font-size: 12px; color: #a8abb2; }
+  }
+}
 
 .reservation-card {
   display: flex;

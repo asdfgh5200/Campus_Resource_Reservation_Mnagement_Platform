@@ -110,15 +110,18 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { Search, Refresh, DocumentCopy } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { api } from '@/api'
 import { copyText as copyToClipboard } from '@/utils/clipboard'
 
+const route = useRoute()
 const activeTab = ref('reservations')
 
-const statusText = { 1: '待打卡', 2: '使用中', 3: '已完成', 4: '已取消', 5: '爽约', 6: '违规' }
-const statusTagType = { 1: 'warning', 2: 'primary', 3: 'success', 4: 'info', 5: 'danger', 6: 'danger' }
+// 状态 3 在用户端已更名为「已结束」，此处保持一致
+const statusText = { 1: '待打卡', 2: '使用中', 3: '已结束', 4: '已取消', 5: '爽约', 6: '违规' }
+const statusTagType = { 1: 'warning', 2: 'primary', 3: 'info', 4: 'info', 5: 'danger', 6: 'danger' }
 const typeText = { 1: '教室', 2: '实验室', 3: '图书馆', 4: '体育馆' }
 const actionText = { 1: '创建预约', 2: '取消预约', 3: '打卡', 4: '爽约', 5: '完成', 6: '提前释放', 7: '暂离', 8: '暂离超时', 9: '删除记录' }
 const actionTagType = { 1: 'success', 2: 'info', 3: 'primary', 4: 'danger', 5: 'warning', 6: 'warning', 7: 'primary', 8: 'danger', 9: 'danger' }
@@ -199,7 +202,13 @@ async function copyText(text) {
   else ElMessage.warning('复制失败，请手动选中复制')
 }
 
-onMounted(loadReservations)
+onMounted(() => {
+  // 支持从「数据概览」点击卡片带筛选跳转：/admin/reservations?status=1&username=xxx
+  if (route.query.status) resQuery.status = Number(route.query.status)
+  if (route.query.username) resQuery.username = String(route.query.username)
+  if (route.query.tab) activeTab.value = String(route.query.tab)
+  loadReservations()
+})
 </script>
 
 <style scoped lang="scss">

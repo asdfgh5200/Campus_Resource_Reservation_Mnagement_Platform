@@ -187,19 +187,36 @@ async function handleRegister() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-image: url('/assets/bg-login.jpg');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
+  background-color: #123A6B;
   position: relative;
   overflow: hidden;
 
+  /* 背景：用户提供的校园图片（原图 2848×1486，已压缩为 1920×1002 / 517KB） */
   &::before {
     content: '';
     position: absolute;
     inset: 0;
-    background: linear-gradient(135deg, rgba(20, 40, 80, 0.3) 0%, rgba(50, 30, 80, 0.3) 100%);
+    background-image: url('/assets/bg-login.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
     z-index: 0;
+    pointer-events: none;
+  }
+
+  /* 整体压暗；中间区域再加深一点，保证白色半透明卡片上的白字清晰 */
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse at 50% 50%,
+      rgba(6, 19, 37, 0.60) 0%,
+      rgba(6, 19, 37, 0.48) 60%,
+      rgba(6, 19, 37, 0.56) 100%
+    );
+    z-index: 0;
+    pointer-events: none;
   }
 }
 
@@ -282,10 +299,10 @@ async function handleRegister() {
   height: 44px;
   font-size: 16px;
   font-weight: 600;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, #144E9C, #2E76DB);
   border: none;
   transition: transform 0.2s, box-shadow 0.2s;
 
-  &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5); }
+  &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(30, 98, 208, 0.5); }
 }
 </style>

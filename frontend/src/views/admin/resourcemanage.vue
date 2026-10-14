@@ -11,6 +11,11 @@
             <el-option label="图书馆" :value="3" />
             <el-option label="体育馆" :value="4" />
           </el-select>
+          <el-select v-model="filterStatus" placeholder="状态" clearable @change="loadData" class="type-select">
+            <el-option label="可预约" :value="1" />
+            <el-option label="使用中" :value="2" />
+            <el-option label="维修中" :value="3" />
+          </el-select>
         </div>
         <el-button type="primary" :icon="Plus" @click="openDialog()">新增资源</el-button>
       </div>
@@ -92,10 +97,6 @@
           <span style="margin: 0 8px">-</span>
           <el-time-picker v-model="editForm.closeTimeObj" format="HH:mm" value-format="HH:mm:00" placeholder="结束" />
         </el-form-item>
-        <el-form-item label="时长上限">
-          <el-input-number v-model="editForm.maxDuration" :min="30" :max="480" :step="30" />
-          <span style="margin-left: 8px">分钟</span>
-        </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="editForm.description" type="textarea" :rows="2" />
         </el-form-item>
@@ -119,16 +120,19 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { Search, Plus, Edit, Delete, Key, DocumentCopy } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
 import { copyText as copyToClipboard } from '@/utils/clipboard'
 
+const route = useRoute()
 const loading = ref(false)
 const submitting = ref(false)
 const keyword = ref('')
 const filterType = ref(undefined)
+const filterStatus = ref(undefined)
 const resources = ref([])
 const total = ref(0)
 const page = reactive({ current: 1, size: 10 })
@@ -173,6 +177,7 @@ async function loadData() {
       current: page.current,
       size: page.size,
       type: filterType.value || undefined,
+      status: filterStatus.value || undefined,
       keyword: keyword.value || undefined
     })
     if (res.code === 200) {
@@ -247,7 +252,12 @@ async function doDelete(row) {
   } catch { /* cancelled */ }
 }
 
-loadData()
+// 支持从「数据概览」点击卡片带筛选跳转：/admin/resources?status=1&type=2
+onMounted(() => {
+  if (route.query.type) filterType.value = Number(route.query.type)
+  if (route.query.status) filterStatus.value = Number(route.query.status)
+  loadData()
+})
 </script>
 
 <style scoped lang="scss">

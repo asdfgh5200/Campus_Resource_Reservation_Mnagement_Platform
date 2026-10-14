@@ -1,15 +1,17 @@
 <template>
-  <div class="rc-root" ref="rootEl" tabindex="0" @keydown="onKey">
+  <div class="rc-root" ref="rootEl" tabindex="0" :style="{ '--pagebg': `url(${cur.pageBg})` }" @keydown="onKey">
+    <!-- 页面级氛围背景图：随分类切换，极淡纹理 -->
+    <div class="rc-pagebg"></div>
     <!-- 左侧弧线导航 -->
     <aside class="rc-rail">
       <div class="rc-rail-inner">
         <svg class="rc-svg" viewBox="0 0 380 640" preserveAspectRatio="xMidYMid meet">
           <defs>
             <linearGradient id="curveGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#5B9DFF" />
-              <stop offset="33%" stop-color="#22D3A4" />
-              <stop offset="66%" stop-color="#F5B547" />
-              <stop offset="100%" stop-color="#FF6B6B" />
+              <stop offset="0%" stop-color="#144E9C" />
+              <stop offset="33%" stop-color="#2E76DB" />
+              <stop offset="66%" stop-color="#4E9BF0" />
+              <stop offset="100%" stop-color="#74B9F5" />
             </linearGradient>
             <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
               <feGaussianBlur stdDeviation="6" result="b" />
@@ -65,7 +67,10 @@
     <!-- 右侧内容面板 -->
     <main class="rc-content">
       <Transition name="swap" mode="out-in">
-        <div class="rc-panel" :key="active" :style="{ '--accent': cur.color }">
+        <div class="rc-panel" :key="active" :style="{ '--accent': cur.color, '--bg': `url(${cur.bg})` }">
+          <!-- 分类背景图（四个分类各不相同） -->
+          <div class="rc-panel-bg"></div>
+          <div class="rc-panel-inner">
           <header class="rc-panel-head">
             <div class="rc-title-box">
               <span class="rc-badge">{{ active + 1 }} / 4</span>
@@ -74,19 +79,50 @@
                 {{ cur.label }}
               </h2>
               <p class="rc-desc">{{ cur.desc }}</p>
+              <div class="rc-feats">
+                <span v-for="f in cur.features" :key="f" class="rc-feat">{{ f }}</span>
+              </div>
             </div>
             <div class="rc-stat-box">
               <div class="rc-stat-item">
-                <span class="num">{{ preview?.total ?? 0 }}</span>
+                <span class="num">{{ stats.total }}</span>
                 <span class="lbl">资源总数</span>
               </div>
-              <div class="rc-stat-item alt">
-                <span class="num">{{ cur.tag }}</span>
-                <span class="lbl">{{ cur.tagUnit }}</span>
+              <div class="rc-stat-item ok">
+                <span class="num">{{ stats.available }}</span>
+                <span class="lbl">当前可约</span>
+              </div>
+              <div class="rc-stat-item danger">
+                <span class="num">{{ stats.busy }}</span>
+                <span class="lbl">占用中</span>
+              </div>
+              <div class="rc-stat-item warn">
+                <span class="num">{{ stats.repair }}</span>
+                <span class="lbl">维修中</span>
               </div>
             </div>
           </header>
 
+          <!-- 我的预约概览 -->
+          <div class="rc-mine">
+            <span class="mine-title">我的预约</span>
+            <span class="mine-item"><i class="d warn"></i>待打卡 {{ mine.pending }}</span>
+            <span class="mine-item"><i class="d danger"></i>使用中 {{ mine.inUse }}</span>
+            <span class="mine-item"><i class="d gray"></i>已结束 {{ mine.done }}</span>
+            <el-button link type="primary" class="mine-more" @click="goMine">
+              查看全部 <el-icon><ArrowRight /></el-icon>
+            </el-button>
+          </div>
+
+          <!-- 资源预览：圆点为"当前是否被占用" -->
+          <div class="rc-preview-head">
+            <span class="ph-title">资源速览</span>
+            <span class="ph-legend">
+              <i class="d ok"></i>空闲
+              <i class="d danger"></i>占用
+              <i class="d warn"></i>维修
+            </span>
+          </div>
           <div class="rc-preview" v-loading="loading">
             <div
               v-for="r in (preview?.records || [])"
@@ -94,7 +130,7 @@
               class="rc-chip"
               @click="goDetail(r.id)"
             >
-              <span class="dot" :style="{ background: cur.color }"></span>
+              <span class="dot" :style="{ background: chipColor(r) }"></span>
               <span class="name">{{ r.name }}</span>
               <span class="meta">{{ r.building }} {{ r.floor }}</span>
             </div>
@@ -105,6 +141,7 @@
             <el-button type="primary" round @click="goCategory(cur.type)">
               查看全部 {{ cur.label }} <el-icon style="margin-left:4px"><ArrowRight /></el-icon>
             </el-button>
+          </div>
           </div>
         </div>
       </Transition>
@@ -122,33 +159,33 @@ const router = useRouter()
 
 const cats = [
   {
-    type: 1, label: '教室', emoji: '🏫', color: '#5B9DFF',
+    type: 1, label: '教室', emoji: '🏫', color: '#144E9C', bg: '/assets/type-classroom.png', pageBg: '/assets/pagebg-1.jpg',
     desc: '教学楼 A/B 栋智慧教室，配备多媒体投影，适合课程教学与小组讨论。',
-    tag: '120', tagUnit: '分钟/次'
+    features: ['课表联动', '无需预约', '空闲可直接使用']
   },
   {
-    type: 2, label: '实验室', emoji: '🧪', color: '#22D3A4',
-    desc: '实验楼 6 层，物理 / 化学 / 生物 / 材料 / 计算机 / 机电六大实验室。',
-    tag: '180', tagUnit: '分钟/次'
+    type: 2, label: '实验室', emoji: '🧪', color: '#2E76DB', bg: '/assets/type-lab.png', pageBg: '/assets/pagebg-2.jpg',
+    desc: '学海楼 6 层，物理 / 化学 / 生物 / 材料 / 计算机 / 机电六大实验室。',
+    features: ['限 10 人小组', '按时段独占', '验证码打卡']
   },
   {
-    type: 3, label: '图书馆', emoji: '📚', color: '#F5B547',
-    desc: '三楼自习区、四楼研讨室、二楼阅览区，安静宽敞的学习空间。',
-    tag: '240', tagUnit: '分钟/次'
+    type: 3, label: '图书馆', emoji: '📚', color: '#4E9BF0', bg: '/assets/type-library.png', pageBg: '/assets/pagebg-3.jpg',
+    desc: '6F / 7F 多媒体自习室，每层 60 个座位，可缩放的座位图按位预约。',
+    features: ['6F / 7F 座位图', '单人单座', '隔板独立工位']
   },
   {
-    type: 4, label: '体育馆', emoji: '🏐', color: '#FF6B6B',
+    type: 4, label: '体育馆', emoji: '🏐', color: '#74B9F5', bg: '/assets/gym-basketball.png', pageBg: '/assets/pagebg-4.jpg',
     desc: 'A 栋游泳馆 / 乒乓球馆，B 栋篮球 / 羽毛球 / 网球 / 排球场地。',
-    tag: '90', tagUnit: '分钟/次'
+    features: ['多人同时预约', '容量实时校验', '剩余数量可见']
   }
 ]
 
 // 弧线上 4 个节点的坐标（与 SVG path 对应）
 const nodes = [
-  { type: 1, x: 120, y: 110, label: '教室', emoji: '🏫', color: '#5B9DFF' },
-  { type: 2, x: 270, y: 255, label: '实验室', emoji: '🧪', color: '#22D3A4' },
-  { type: 3, x: 130, y: 400, label: '图书馆', emoji: '📚', color: '#F5B547' },
-  { type: 4, x: 280, y: 545, label: '体育馆', emoji: '🏐', color: '#FF6B6B' }
+  { type: 1, x: 120, y: 110, label: '教室', emoji: '🏫', color: '#144E9C' },
+  { type: 2, x: 270, y: 255, label: '实验室', emoji: '🧪', color: '#2E76DB' },
+  { type: 3, x: 130, y: 400, label: '图书馆', emoji: '📚', color: '#4E9BF0' },
+  { type: 4, x: 280, y: 545, label: '体育馆', emoji: '🏐', color: '#74B9F5' }
 ]
 
 const active = ref(0)
@@ -157,16 +194,47 @@ const preview = ref(null)
 const loading = ref(false)
 const animating = ref(false)
 
+// 当前分类的资源统计（总数 / 可约 / 占用 / 维修）
+const stats = reactive({ total: 0, available: 0, busy: 0, repair: 0 })
+// 我的预约概览
+const mine = reactive({ pending: 0, inUse: 0, done: 0 })
+
 const rootEl = ref(null)
 const traveler = ref(null)
 let raf = null
 
 const previews = reactive({})
 
+// 资源圆点颜色：维修=黄、占用=红、空闲=绿（教室看"是否正在上课"）
+function chipColor(r) {
+  if (r.status === 3) return '#e6a23c'
+  if (r.resourceType === 1) return r.courseBusy ? '#f56c6c' : '#67c23a'
+  return r.reserved ? '#f56c6c' : '#67c23a'
+}
+
 async function loadPreview(type) {
   if (previews[type]) return
-  const res = await api.getResourcePage({ current: 1, size: 8, type })
-  if (res.code === 200) previews[type] = res.data
+  const res = await api.getResourcePage({ current: 1, size: 500, type })
+  if (res.code === 200) {
+    const recs = res.data.records || []
+    previews[type] = {
+      total: res.data.total || recs.length,
+      records: recs.slice(0, 8),
+      available: recs.filter(r => r.status === 1 && !r.reserved && !r.courseBusy).length,
+      busy: recs.filter(r => r.status !== 3 && (r.reserved || r.courseBusy || r.status === 2)).length,
+      repair: recs.filter(r => r.status === 3).length
+    }
+  }
+}
+
+async function loadMine() {
+  const res = await api.getMyReservations({ current: 1, size: 100 })
+  if (res.code === 200) {
+    const recs = res.data?.records || []
+    mine.pending = recs.filter(r => r.status === 1).length
+    mine.inUse = recs.filter(r => r.status === 2).length
+    mine.done = recs.filter(r => r.status === 3).length
+  }
 }
 
 async function showPreview(i) {
@@ -174,6 +242,12 @@ async function showPreview(i) {
   preview.value = previews[cats[i].type] || null
   await loadPreview(cats[i].type)
   preview.value = previews[cats[i].type]
+  Object.assign(stats, {
+    total: preview.value?.total || 0,
+    available: preview.value?.available || 0,
+    busy: preview.value?.busy || 0,
+    repair: preview.value?.repair || 0
+  })
   loading.value = false
 }
 
@@ -220,11 +294,13 @@ function onKey(e) {
 
 function goCategory(type) { router.push(`/category/${type}`) }
 function goDetail(id) { router.push(`/resource/${id}`) }
+function goMine() { router.push('/my-reservations') }
 
 onMounted(async () => {
   rootEl.value?.focus()
   // 非被动监听，确保 preventDefault 生效
   rootEl.value?.addEventListener('wheel', onWheel, { passive: false })
+  loadMine()
   await Promise.all(cats.map(c => loadPreview(c.type)))
   await showPreview(0)
 })
@@ -247,17 +323,32 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 22px;
   background:
-    radial-gradient(1100px 560px at 80% 15%, rgba(91, 157, 255, 0.08), transparent 60%),
-    radial-gradient(900px 560px at 8% 88%, rgba(255, 107, 107, 0.07), transparent 60%),
-    linear-gradient(135deg, #f7f9fc 0%, #eef2f8 55%, #f3f0fa 100%);
+    radial-gradient(1100px 560px at 80% 15%, rgba(46, 118, 219, 0.05), transparent 60%),
+    radial-gradient(900px 560px at 8% 88%, rgba(116, 185, 245, 0.06), transparent 60%),
+    linear-gradient(135deg, #fbfcfe 0%, #f5f8fd 55%, #eef4fd 100%);
   outline: none;
   color: #303133;
+}
+
+/* 页面级氛围背景图：左侧导航区较明显，向右淡出（蓝色底已调淡，避免盖住照片） */
+.rc-pagebg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-image: var(--pagebg);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.22;
+  pointer-events: none;
+  mask-image: linear-gradient(90deg, #000 0%, #000 34%, rgba(0, 0, 0, 0.45) 58%, transparent 82%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0%, #000 34%, rgba(0, 0, 0, 0.45) 58%, transparent 82%);
 }
 
 /* ---------- 左侧弧线导航 ---------- */
 .rc-rail {
   flex: 0 0 40%;
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -290,7 +381,7 @@ onBeforeUnmount(() => {
   stroke-dasharray: 1400;
   stroke-dashoffset: 0;
   transition: stroke-dashoffset 0.65s cubic-bezier(0.22, 1, 0.36, 1);
-  filter: drop-shadow(0 2px 6px rgba(91, 157, 255, 0.25));
+  filter: drop-shadow(0 2px 6px rgba(46, 118, 219, 0.28));
 }
 .rc-traveler {
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.18));
@@ -353,25 +444,68 @@ onBeforeUnmount(() => {
 /* ---------- 右侧内容 ---------- */
 .rc-content {
   flex: 1;
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   padding: 18px 28px 18px 0;
 }
 .rc-panel {
+  position: relative;
   width: 100%;
   background: #fff;
-  border: 1px solid #ebeef5;
+  border: 1px solid #dbe6f5;
   border-radius: 20px;
   padding: 30px 32px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+  box-shadow: 0 8px 30px rgba(30, 98, 208, 0.10);
 }
 
+/* 右侧大面积淡背景图（四个分类各不相同） */
+.rc-panel-bg {
+  position: absolute;
+  inset: 0;
+  background-image: var(--bg);
+  background-size: cover;
+  background-position: center;
+  opacity: 0.10;
+  pointer-events: none;
+}
+.rc-panel-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0.92) 55%, #fff 100%);
+}
+.rc-panel-inner { position: relative; z-index: 1; }
+
 .rc-panel-head {
+  position: relative;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 20px;
   margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid rgba(30, 98, 208, 0.10);
+}
+
+/* 标题区右侧露出分类实景图 */
+.rc-panel-head::after {
+  content: '';
+  position: absolute;
+  right: -34px;
+  top: -30px;
+  width: 220px;
+  height: 118px;
+  background-image: var(--bg);
+  background-size: cover;
+  background-position: center;
+  border-radius: 0 20px 0 90px;
+  opacity: 0.5;
+  mask-image: linear-gradient(90deg, transparent 0%, #000 60%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 60%);
+  pointer-events: none;
 }
 .rc-badge {
   display: inline-block;
@@ -401,17 +535,63 @@ onBeforeUnmount(() => {
   margin: 0;
   max-width: 520px;
 }
-.rc-stat-box { display: flex; gap: 14px; flex-shrink: 0; }
+.rc-stat-box { position: relative; z-index: 2; display: flex; gap: 10px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
 .rc-stat-item {
+  min-width: 74px;
   text-align: center;
-  padding: 8px 16px;
+  padding: 8px 12px;
   border-radius: 12px;
   background: #f7f8fa;
   border: 1px solid #ebeef5;
   .num { display: block; font-size: 22px; font-weight: 800; color: #303133; }
   .lbl { font-size: 11px; color: #909399; }
+  &.ok .num { color: #67c23a; }
+  &.danger .num { color: #f56c6c; }
+  &.warn .num { color: #e6a23c; }
 }
-.rc-stat-item.alt .num { color: var(--accent); }
+
+/* 分类特色标签 */
+.rc-feats {
+  display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;
+  .rc-feat {
+    font-size: 12px; color: var(--el-color-primary); background: rgba(30, 98, 208, 0.10);
+    padding: 3px 10px; border-radius: 20px;
+  }
+}
+
+/* 我的预约概览 */
+.rc-mine {
+  display: flex; align-items: center; gap: 18px;
+  padding: 10px 16px; margin-bottom: 14px;
+  border-radius: 12px; background: #f7f9fc; border: 1px solid #eef2f7;
+  .mine-title { font-size: 13px; font-weight: 600; color: #303133; }
+  .mine-item { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #606266; }
+  .mine-more { margin-left: auto; }
+  .d {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+    &.ok { background: #67c23a; }
+    &.danger { background: #f56c6c; }
+    &.warn { background: #e6a23c; }
+    &.gray { background: #c0c4cc; }
+  }
+}
+
+/* 资源速览标题与图例 */
+.rc-preview-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 2px 8px;
+  .ph-title { font-size: 13px; font-weight: 600; color: #303133; }
+  .ph-legend {
+    display: flex; align-items: center; gap: 12px; font-size: 12px; color: #909399;
+    .d {
+      width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+      margin-right: 4px; vertical-align: middle;
+      &.ok { background: #67c23a; }
+      &.danger { background: #f56c6c; }
+      &.warn { background: #e6a23c; }
+    }
+  }
+}
 
 .rc-preview {
   display: grid;

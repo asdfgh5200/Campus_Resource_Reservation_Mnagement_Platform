@@ -194,6 +194,7 @@
                 <li v-if="resource.resourceType === 2">本实验室限 <b>10 人</b>，以小组为单位预约，组长一人预约即可</li>
                 <li>打卡时间窗：预约开始前 30 分钟 ~ 开始后 5 分钟，超时未打卡将自动释放空间并记一次爽约</li>
                 <li>使用中可提前释放空间，或暂离（30 分钟；饭点 11:00-12:30 / 17:30-19:00 可暂离 1 小时）</li>
+                <li>同一时间段内只能预约 <b>一个资源</b>；时间不冲突可多次预约（冲突时提交会被拒绝）</li>
                 <li>预约时间冲突时系统会自动拒绝</li>
               </ul>
             </el-alert>
@@ -212,6 +213,7 @@ import {
   ArrowLeft, OfficeBuilding, Position, User, Clock, Timer, Document, Calendar
 } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { resourceImage } from '@/utils/resourceImage'
 
 const route = useRoute()
 const router = useRouter()
@@ -234,14 +236,7 @@ const gymCapacity = computed(() => resource.value?.capacity || 0)
 const gymUnitText = computed(() => resource.value?.unit || '人')
 const gymCountLabel = computed(() => (gymUnitText.value === '人' ? '使用人数' : '使用数量'))
 
-const typeImages = {
-  1: '/assets/type-classroom.png',
-  2: '/assets/type-lab.png',
-  3: '/assets/type-library.png',
-  4: '/assets/type-gym.png'
-}
-
-const headerImage = computed(() => typeImages[resource.value?.resourceType] || typeImages[1])
+const headerImage = computed(() => resourceImage(resource.value))
 
 function statusText(s) { return { 1: '可预约', 2: '使用中', 3: '维修中' }[s] || '未知' }
 // 配色约定：可预约/可用=绿，已占用/使用中=红，维修中=黄
@@ -637,14 +632,14 @@ onBeforeUnmount(() => clearInterval(nowTimer))
 
 .submit-btn {
   width: 100%;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: linear-gradient(135deg, #144E9C, #2E76DB);
   border: none;
   height: 44px;
   font-size: 16px;
   font-weight: 600;
   transition: transform 0.2s, box-shadow 0.2s;
 
-  &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4); }
+  &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(30, 98, 208, 0.4); }
 }
 
 .reserve-tips { margin-top: 8px; }
