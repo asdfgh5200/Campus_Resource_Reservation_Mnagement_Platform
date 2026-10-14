@@ -13,72 +13,167 @@
         <p class="subtitle">统一管理教室 · 实验室 · 图书馆 · 体育馆</p>
       </div>
 
-      <el-form ref="formRef" :model="form" :rules="rules" size="large" @submit.prevent="handleLogin">
+      <el-tabs v-model="activeTab" class="auth-tabs" stretch @tab-change="onTabChange">
+        <el-tab-pane label="登录" name="login" />
+        <el-tab-pane label="注册" name="register" />
+      </el-tabs>
+
+      <!-- 登录 -->
+      <el-form
+        v-if="activeTab === 'login'"
+        ref="loginFormRef"
+        :model="loginForm"
+        :rules="loginRules"
+        size="large"
+        @submit.prevent="handleLogin"
+      >
         <el-form-item prop="username">
-          <el-input v-model="form.username" placeholder="请输入用户名" :prefix-icon="User" />
+          <el-input v-model="loginForm.username" placeholder="请输入用户名" :prefix-icon="User" />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" placeholder="请输入密码" :prefix-icon="Lock" show-password @keyup.enter="handleLogin" />
+          <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" :prefix-icon="Lock" show-password @keyup.enter="handleLogin" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
-            登 录
-          </el-button>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">登 录</el-button>
         </el-form-item>
       </el-form>
 
-      <div class="test-accounts">
-        <p class="test-title">测试账号（点击快速填充）</p>
-        <div class="test-buttons">
-          <span class="test-tag" @click="fillAccount('admin', 'admin')">管理员 admin/admin</span>
-          <span class="test-tag" @click="fillAccount('user', 'user')">学生 user/user</span>
-        </div>
-      </div>
+      <!-- 注册 -->
+      <el-form
+        v-else
+        ref="registerFormRef"
+        :model="registerForm"
+        :rules="registerRules"
+        size="large"
+        @submit.prevent="handleRegister"
+      >
+        <el-form-item prop="username">
+          <el-input v-model="registerForm.username" placeholder="用户名（3-20 位字母/数字/下划线）" :prefix-icon="User" />
+        </el-form-item>
+        <el-form-item prop="nickname">
+          <el-input v-model="registerForm.nickname" placeholder="姓名 / 昵称（选填）" :prefix-icon="Postcard" />
+        </el-form-item>
+        <el-form-item prop="phone">
+          <el-input v-model="registerForm.phone" placeholder="手机号（选填）" :prefix-icon="Iphone" maxlength="11" />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input v-model="registerForm.password" type="password" placeholder="密码（6-32 位）" :prefix-icon="Lock" show-password />
+        </el-form-item>
+        <el-form-item prop="confirmPassword">
+          <el-input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" :prefix-icon="Lock" show-password @keyup.enter="handleRegister" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleRegister">注 册</el-button>
+        </el-form-item>
+      </el-form>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import { User, Lock } from '@element-plus/icons-vue'
+import { useRouter, useRoute } from 'vue-router'
+import { User, Lock, Postcard, Iphone } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { api } from '@/api'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 
-const formRef = ref()
+const activeTab = ref('login')
 const loading = ref(false)
 
-const form = reactive({ username: '', password: '' })
+const loginFormRef = ref()
+const registerFormRef = ref()
 
-const rules = {
+const loginForm = reactive({ username: '', password: '' })
+const registerForm = reactive({ username: '', nickname: '', phone: '', password: '', confirmPassword: '' })
+
+const loginRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
-function fillAccount(u, p) {
-  form.username = u
-  form.password = p
+const registerRules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { pattern: /^[a-zA-Z0-9_]{3,20}$/, message: '3-20 位字母、数字或下划线', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, max: 32, message: '密码长度需为 6-32 位', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: '请再次输入密码', trigger: 'blur' },
+    {
+      validator: (rule, value, callback) => {
+        if (value !== registerForm.password) callback(new Error('两次输入的密码不一致'))
+        else callback()
+      },
+      trigger: 'blur'
+    }
+  ],
+  phone: [{
+    validator: (rule, value, callback) => {
+      if (!value || /^1[3-9]\d{9}$/.test(value)) callback()
+      else callback(new Error('手机号格式不正确'))
+    },
+    trigger: 'blur'
+  }]
+}
+
+function onTabChange() {
+  loginFormRef.value?.clearValidate()
+  registerFormRef.value?.clearValidate()
 }
 
 async function handleLogin() {
-  if (!formRef.value) return
-  await formRef.value.validate(async (valid) => {
+  if (!loginFormRef.value) return
+  await loginFormRef.value.validate(async (valid) => {
     if (!valid) return
     loading.value = true
     try {
-      const res = await userStore.login(form.username, form.password)
+      const res = await userStore.login(loginForm.username, loginForm.password)
       if (res.code === 200) {
         ElMessage.success('登录成功')
-        const target = userStore.isAdmin ? '/admin/dashboard' : '/home'
+        const target = route.query.redirect || (userStore.isAdmin ? '/admin/dashboard' : '/home')
         router.replace(target)
       } else {
         ElMessage.error(res.message)
       }
     } catch (e) {
       ElMessage.error('登录失败，请重试')
+    } finally {
+      loading.value = false
+    }
+  })
+}
+
+async function handleRegister() {
+  if (!registerFormRef.value) return
+  await registerFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    loading.value = true
+    try {
+      const res = await api.register({
+        username: registerForm.username,
+        password: registerForm.password,
+        nickname: registerForm.nickname,
+        phone: registerForm.phone
+      })
+      if (res.code === 200) {
+        ElMessage.success('注册成功，请使用新账号登录')
+        loginForm.username = registerForm.username
+        loginForm.password = ''
+        activeTab.value = 'login'
+        registerFormRef.value.resetFields()
+      } else {
+        ElMessage.error(res.message)
+      }
+    } catch (e) {
+      ElMessage.error('注册失败，请重试')
     } finally {
       loading.value = false
     }
@@ -152,11 +247,19 @@ async function handleLogin() {
 
 .login-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: 20px;
 
   .logo-icon { font-size: 48px; }
   .title { font-size: 24px; font-weight: 700; color: #fff; margin: 12px 0 6px; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
   .subtitle { font-size: 13px; color: rgba(255, 255, 255, 0.85); }
+}
+
+.auth-tabs {
+  :deep(.el-tabs__header) { margin-bottom: 20px; }
+  :deep(.el-tabs__nav-wrap::after) { background-color: rgba(255, 255, 255, 0.2); }
+  :deep(.el-tabs__item) { color: rgba(255, 255, 255, 0.7); font-size: 15px; }
+  :deep(.el-tabs__item.is-active) { color: #fff; font-weight: 600; }
+  :deep(.el-tabs__active-bar) { background-color: #fff; }
 }
 
 // 半透明输入框
@@ -184,25 +287,5 @@ async function handleLogin() {
   transition: transform 0.2s, box-shadow 0.2s;
 
   &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5); }
-}
-
-.test-accounts {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.2);
-
-  .test-title { font-size: 12px; color: rgba(255, 255, 255, 0.8); margin-bottom: 10px; }
-  .test-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-  .test-tag {
-    font-size: 12px;
-    color: #fff;
-    background: rgba(255, 255, 255, 0.15);
-    padding: 4px 10px;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-
-    &:hover { background: rgba(255, 255, 255, 0.3); }
-  }
 }
 </style>

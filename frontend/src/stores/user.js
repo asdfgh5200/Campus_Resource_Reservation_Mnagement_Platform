@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { mockApi } from '@/api/mock'
+import { api } from '@/api'
 
 export const useUserStore = defineStore('user', {
   state: () => ({
@@ -14,7 +14,7 @@ export const useUserStore = defineStore('user', {
 
   actions: {
     async login(username, password) {
-      const res = await mockApi.login(username, password)
+      const res = await api.login(username, password)
       if (res.code === 200) {
         this.token = res.data.token
         this.userInfo = res.data.userInfo

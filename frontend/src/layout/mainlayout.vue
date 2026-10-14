@@ -29,7 +29,9 @@
             <span>管理后台</span>
           </template>
           <el-menu-item index="/admin/dashboard">数据概览</el-menu-item>
+          <el-menu-item index="/admin/reservations">预约管理</el-menu-item>
           <el-menu-item index="/admin/resources">资源管理</el-menu-item>
+          <el-menu-item index="/admin/courses">课表管理</el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>
@@ -45,6 +47,10 @@
           <span class="page-title">{{ pageTitle }}</span>
         </div>
         <div class="header-right">
+          <span class="clock">
+            <el-icon><Clock /></el-icon>
+            {{ clockText }}
+          </span>
           <el-dropdown @command="onCommand">
             <span class="user-info">
               <el-avatar :size="32" class="avatar">{{ avatarText }}</el-avatar>
@@ -74,7 +80,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 
@@ -83,6 +89,16 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const collapsed = ref(false)
+
+const now = ref(new Date())
+let clockTimer = null
+const clockText = computed(() => {
+  const d = now.value
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+})
+onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000) })
+onBeforeUnmount(() => clearInterval(clockTimer))
 
 const activeMenu = computed(() => route.path)
 const pageTitle = computed(() => route.meta.title || '校园资源预约平台')
@@ -161,6 +177,19 @@ function onCommand(cmd) {
   }
 
   .header-right {
+    .clock {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-right: 18px;
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: #f5f7fa;
+      border: 1px solid #ebeef5;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+      color: #303133;
+    }
     .user-info {
       display: flex;
       align-items: center;

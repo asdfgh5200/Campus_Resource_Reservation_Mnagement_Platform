@@ -42,7 +42,7 @@
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { PieChart, List } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
-import { mockApi } from '@/api/mock'
+import { api } from '@/api'
 
 const loading = ref(false)
 const chartRef = ref()
@@ -62,7 +62,7 @@ function statusTagType(s) { return { 1: 'warning', 2: 'primary', 3: 'success', 4
 async function loadData() {
   loading.value = true
   try {
-    const res = await mockApi.getStats()
+    const res = await api.getStats()
     if (res.code === 200) {
       Object.assign(stats, res.data)
       await nextTick()

@@ -50,7 +50,7 @@
 
 **资源状态 `status`：** `1` 待使用、`2` 正在被使用、`3` 维修中
 
-**打卡方式 `checkinType`：** `1` 定位打卡、`2` 文字验证码 
+**打卡方式 `checkinType`：** 固定为 `2`（文字验证码），系统不再提供定位打卡
 
 **违规类型 `type`：** `1` 爽约、`2` 恶意取消、`3` 其他
 
@@ -89,13 +89,23 @@
   "code": 200,
   "message": "操作成功",
   "data": {
-    "records": [{ "id": 1, "name": "A101", "resourceType": 1, "status": 1 }],
+    "records": [{ "id": 1, "name": "A101", "resourceType": 1, "status": 1, "reserved": false }],
     "total": 1,
     "current": 1,
     "size": 10
   }
 }
 ```
+
+> `reserved`：**当前时刻**是否存在有效预约（即"当前是否有人正在使用"）。前端据此把房间右上角小圆点标为红色；实验室等按"时段独占"的资源，其他时段空档不影响该标记。
+>
+> `reservedByMe`：当前占用者是否为本人。
+>
+> `unit`：资源计量单位（体育馆各场馆不同：乒乓球馆=`台`、球场=`片`，其余=`人`）。
+>
+> `occupiedNow`：**仅体育馆**返回，该场馆当前时段已约数量（剩余 = `capacity - occupiedNow`）。
+>
+> `courseBusy` / `courseNowName`：**仅教室**返回，当前是否正在上课及课程名。
 
 ### 2.2 查询资源详情 ✅
 
@@ -171,12 +181,16 @@
 {
   "resourceId": 1,
   "startTime": "2026-09-17 10:00:00",
-  "endTime": "2026-09-17 12:00:00"
+  "endTime": "2026-09-17 12:00:00",
+  "headcount": 1
 }
 ```
 
 - 服务端校验：资源开放时间、单次时长上限、信用分、**时间冲突**
-- 冲突时返回 `code: 409`
+- `headcount`：使用数量，**仅体育馆（`resourceType=4`）生效**，其他资源忽略（固定 1）
+- 冲突规则：
+  - **体育馆**：允许多人同时预约，同一时段所有有效预约的 `headcount` 之和 + 本次不得超过场馆 `capacity`，超出返回 `code: 409`
+  - **其他资源**：任何时段重叠都拒绝（`code: 409`）
 
 ### 4.2 我的预约（分页）📝
 
@@ -192,22 +206,53 @@
 
 - **GET** `/api/reservations/{id}`
 
+### 4.5 提前释放空间 ✅
+
+- **POST** `/api/reservations/{id}/release`
+- 仅"使用中"的预约可调用；立即结束预约并释放空间（状态置为已完成）
+
+### 4.6 暂离 / 结束暂离 ✅
+
+- **POST** `/api/reservations/{id}/away?minutes=30|60`
+- 仅"使用中"的预约可调用；暂离期间空间保留（仍锁定）
+- `minutes=30` 任意时间可用；`minutes=60` 仅**午餐 11:00-12:30 / 晚餐 17:30-19:00** 可用
+- 超时未结束暂离 → 系统自动释放空间并记一次违规
+
+- **POST** `/api/reservations/{id}/away/cancel`
+- 结束暂离，恢复使用
+
+### 4.7 删除预约记录（用户端「我的预约」）✅
+
+- **DELETE** `/api/reservations/{id}`
+- 仅限**已结束**的预约（已完成 `3` / 已取消 `4` / 爽约 `5` / 违规 `6`）；删除为软删除，记录不再出现在"我的预约"
+- 待打卡 `1`、使用中 `2` 不可删除，返回 `400`（请先"取消"或"提前释放"）
+- 删除会在管理端写入一条操作日志（`action=9`，含用户名），保证操作可审计
+- 仅可操作本人预约，管理员不受限
+
+### 4.8 管理端：全部预约分页（含用户名与验证码）✅
+
+- **GET** `/api/admin/reservations/page?current=&size=&username=&status=&resourceType=`
+- 需管理员权限；支持按用户名、状态、资源类型筛选
+- 返回记录含 `user`（用户名/昵称）、`resource`（资源信息）与 `checkinCode`（该资源当日验证码，仅"待打卡"预约有值）
+
+### 4.9 管理端：预约操作日志分页 ✅
+
+- **GET** `/api/admin/reservations/logs?current=&size=&username=&action=`
+- 需管理员权限；`action`：`1` 创建预约、`2` 取消预约、`3` 打卡、`4` 爽约、`5` 完成、`6` 提前释放、`7` 暂离、`8` 暂离超时、`9` 删除记录
+- 记录创建/取消/打卡等操作，用于管理端追溯用户操作
+
 ---
 
 ## 5. 打卡核验模块
 
-### 5.1 定位打卡 📝
+> **打卡时间窗**：预约开始前 30 分钟 ~ 开始后 5 分钟。超过该时段未打卡，系统自动释放空间并记为爽约（扣信用分）。
 
-- **POST** `/api/checkins/location`
-- 请求体：`{ "reservationId", "longitude", "latitude" }`
-- 服务端计算与资源距离，超过阈值（如 100m）返回失败
-
-### 5.2 生成/获取当日文字验证码 📝
+### 5.1 生成/获取当日文字验证码 📝
 
 - **GET** `/api/checkins/code/{resourceId}`
-- 管理员/资源侧使用，返回当日动态验证码
+- 管理员使用，返回当日动态验证码（不存在时自动生成）
 
-### 5.3 文字验证码打卡 📝
+### 5.2 文字验证码打卡 📝
 
 - **POST** `/api/checkins/verify`
 - 请求体：`{ "reservationId", "code" }`
@@ -226,15 +271,30 @@
 
 ## 7. 教室 + 课表模块
 
-### 7.1 导入课表 📝
+> **教室（`resourceType=1`）不参与预约**：未被课程占用时用户可直接进入使用，系统只负责展示课表占用情况。
+> 用户端教室列表的红点表示"当前正在上课"，点击进入详情查看课表；调用 `POST /api/reservations` 预约教室会返回 `400`。
+
+### 7.1 导入课表（管理端）✅
 
 - **POST** `/api/courses/import`
-- 请求体：JSON 数组 `[{ "roomId", "courseName", "dayOfWeek", "startTime", "endTime", "teacher" }]`
+- 需管理员权限；请求体为 JSON 数组，单条手动填写也走此接口
+- 格式：`[{ "roomId", "courseName", "dayOfWeek", "startTime", "endTime", "teacher", "term" }]`
+- `dayOfWeek`：`1~7`（周一~周日）；`startTime/endTime`：`HH:mm:ss`
 
-### 7.2 查询教室当日可预约时段 📝
+### 7.2 课表列表（管理端）✅
+
+- **GET** `/api/courses?roomId=&dayOfWeek=&building=`
+- 需管理员权限；返回含教室名称/楼栋/楼层的课表记录列表
+
+### 7.3 删除课表记录（管理端）✅
+
+- **DELETE** `/api/courses/{id}`
+- 需管理员权限
+
+### 7.4 查询教室当日课表与空闲时段 ✅
 
 - **GET** `/api/courses/available?roomId=&date=`
-- 依据课表排除课程占用时段，返回空闲时段列表
+- 依据课表排除课程占用时段，返回当日课程列表与空闲时段（供用户端条形图展示）
 
 ---
 
