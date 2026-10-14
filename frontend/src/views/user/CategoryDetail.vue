@@ -74,7 +74,7 @@
         class="resource-card"
         @click="onRoomClick(item)"
       >
-        <div class="card-banner" :style="{ backgroundImage: `url(${catInfo.image})` }">
+        <div class="card-banner" :style="{ backgroundImage: `url(${getVenueImage(item)})` }">
           <div class="banner-overlay"></div>
           <span class="banner-room">{{ item.roomNo }}</span>
           <el-tag :type="Number(route.params.type) === 4 ? venueTagType(item) : statusTagType(item.status)" size="small" effect="dark" class="status-tag">
@@ -163,7 +163,7 @@ const groupsPerPage = 5
 const catConfig = {
   1: {
     label: '教室', icon: 'School', image: '/assets/type-classroom.png',
-    subItems: ['教学楼A栋', '教学楼B栋'],
+    subItems: [],
     buildings: ['教学楼A栋', '教学楼B栋'],
     floors: ['1F', '2F', '3F', '4F', '5F']
   },
@@ -239,6 +239,23 @@ const pagedGroups = computed(() => {
   const start = (groupPage.value - 1) * groupsPerPage
   return groupedResources.value.slice(start, start + groupsPerPage)
 })
+
+// 体育馆各场馆对应图片
+const gymImageMap = {
+  '游泳馆': '/assets/gym-swimming.png',
+  '乒乓球馆': '/assets/gym-tabletennis.png',
+  '篮球场': '/assets/gym-basketball.png',
+  '羽毛球场': '/assets/gym-badminton.png',
+  '网球场': '/assets/gym-tennis.png',
+  '排球场': '/assets/gym-volleyball.png'
+}
+
+function getVenueImage(item) {
+  if (Number(route.params.type) === 4) {
+    return gymImageMap[item.name] || catInfo.value.image
+  }
+  return catInfo.value.image
+}
 
 function statusText(s) { return { 1: '可预约', 2: '使用中', 3: '维修中' }[s] || '未知' }
 // 配色约定：可预约/可用=绿，已约/使用中=红，维修中=黄
