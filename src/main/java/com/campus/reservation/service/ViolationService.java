@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,7 +49,7 @@ public class ViolationService {
                 : userMapper.selectBatchIds(byUser.keySet()).stream()
                         .collect(Collectors.toMap(SysUser::getId, u -> u));
 
-        LocalDateTime weekAgo = LocalDateTime.now().minusDays(7);
+        LocalDateTime todayStart = LocalDate.now().atStartOfDay();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Map.Entry<Long, List<Violation>> e : byUser.entrySet()) {
             SysUser u = users.get(e.getKey());
@@ -62,8 +63,8 @@ public class ViolationService {
                     continue;
                 }
             }
-            long week = e.getValue().stream()
-                    .filter(v -> v.getCreatedAt() != null && v.getCreatedAt().isAfter(weekAgo))
+            long today = e.getValue().stream()
+                    .filter(v -> v.getCreatedAt() != null && !v.getCreatedAt().isBefore(todayStart))
                     .count();
             LocalDateTime last = e.getValue().stream()
                     .map(Violation::getCreatedAt).filter(Objects::nonNull)
@@ -72,10 +73,9 @@ public class ViolationService {
             m.put("userId", u.getId());
             m.put("username", u.getUsername());
             m.put("nickname", u.getNickname());
-            m.put("creditScore", u.getCreditScore());
             m.put("totalCount", (long) e.getValue().size());
-            m.put("weekCount", week);
-            m.put("restricted", week >= ReservationService.WEEKLY_VIOLATION_LIMIT);
+            m.put("todayCount", today);
+            m.put("restricted", today >= ReservationService.DAILY_VIOLATION_LIMIT);
             m.put("lastViolationAt", last);
             rows.add(m);
         }
@@ -89,28 +89,28 @@ public class ViolationService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("records", new ArrayList<>(rows.subList(from, to)));
         result.put("total", rows.size());
-        result.put("limit", ReservationService.WEEKLY_VIOLATION_LIMIT);
+        result.put("limit", ReservationService.DAILY_VIOLATION_LIMIT);
         return result;
     }
 
-    /** 我的违规概览：近 7 天次数 / 累计次数 / 是否被限制预约 */
+    /** 我的违规概览：今日次数 / 累计次数 / 今日是否被禁止预约 */
     public Map<String, Object> mySummary(Long userId) {
-        Long weekCount = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
+        Long todayCount = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
                 .eq(Violation::getUserId, userId)
                 .eq(Violation::getStatus, 1)
-                .ge(Violation::getCreatedAt, LocalDateTime.now().minusDays(7)));
+                .ge(Violation::getCreatedAt, LocalDate.now().atStartOfDay()));
         Long totalCount = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
                 .eq(Violation::getUserId, userId)
                 .eq(Violation::getStatus, 1));
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("weekCount", weekCount == null ? 0 : weekCount);
+        m.put("todayCount", todayCount == null ? 0 : todayCount);
         m.put("totalCount", totalCount == null ? 0 : totalCount);
-        m.put("limit", ReservationService.WEEKLY_VIOLATION_LIMIT);
-        m.put("restricted", weekCount != null && weekCount >= ReservationService.WEEKLY_VIOLATION_LIMIT);
+        m.put("limit", ReservationService.DAILY_VIOLATION_LIMIT);
+        m.put("restricted", todayCount != null && todayCount >= ReservationService.DAILY_VIOLATION_LIMIT);
         return m;
     }
 
-    /** 手动登记违规（管理员），并同步扣减信用分 */
+    /** 手动登记违规（管理员）：仅记录，不涉及信用分 */
     @Transactional
     public Violation add(ViolationDTO dto) {
         if (dto.getUserId() == null || dto.getType() == null) {
@@ -125,15 +125,9 @@ public class ViolationService {
         violation.setReservationId(dto.getReservationId());
         violation.setType(dto.getType());
         violation.setDescription(dto.getDescription());
-        violation.setDeductScore(dto.getDeductScore() == null ? 0 : dto.getDeductScore());
+        violation.setDeductScore(0);
         violation.setStatus(1);
         violationMapper.insert(violation);
-
-        SysUser update = new SysUser();
-        update.setId(user.getId());
-        update.setCreditScore(Math.max(0,
-                (user.getCreditScore() == null ? 100 : user.getCreditScore()) - violation.getDeductScore()));
-        userMapper.updateById(update);
         return violation;
     }
 }

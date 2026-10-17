@@ -151,3 +151,24 @@ CREATE TABLE IF NOT EXISTS `reservation_log` (
     KEY `idx_action` (`action`),
     KEY `idx_created` (`created_at`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '预约操作日志表';
+
+CREATE TABLE IF NOT EXISTS `system_config` (
+    `config_key`   VARCHAR(50)  NOT NULL COMMENT '配置键',
+    `config_value` VARCHAR(200) NOT NULL COMMENT '配置值',
+    `updated_at`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`config_key`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '系统配置表（一键闭馆等全局开关）';
+
+CREATE TABLE IF NOT EXISTS `user_message` (
+    `id`         BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `user_id`    BIGINT        NOT NULL COMMENT '所属用户 ID（留言=发起人，回复/通知=接收人）',
+    -- direction: 1 用户→管理员（留言/咨询）、2 管理员或系统→用户（回复/通知）
+    `direction`  TINYINT       NOT NULL DEFAULT 1 COMMENT '方向：1 用户→管理员、2 管理员/系统→用户',
+    `content`    VARCHAR(1000) NOT NULL COMMENT '消息内容',
+    `ref_id`     BIGINT        DEFAULT NULL COMMENT '回复指向的原留言 ID',
+    `is_read`    TINYINT       NOT NULL DEFAULT 0 COMMENT '0 未读、1 已读',
+    `created_at` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user` (`user_id`),
+    KEY `idx_direction_read` (`direction`, `is_read`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '站内消息表（用户↔管理员）';

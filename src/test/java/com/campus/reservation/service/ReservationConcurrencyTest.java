@@ -76,7 +76,8 @@ class ReservationConcurrencyTest {
             users.add(u);
         }
 
-        LocalDateTime day = LocalDate.now().plusDays(2).atStartOfDay();
+        // 图书馆座位预约需遵守“最多提前一天”规则：使用“明日”作为预约日
+        LocalDateTime day = LocalDate.now().plusDays(1).atStartOfDay();
         LocalDateTime start = day.plusHours(10);
         LocalDateTime end = day.plusHours(11);
 

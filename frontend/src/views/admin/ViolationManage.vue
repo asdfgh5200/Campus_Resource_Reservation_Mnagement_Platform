@@ -17,7 +17,7 @@
           <el-button :icon="Refresh" @click="loadData">刷新</el-button>
         </div>
         <div class="toolbar-right">
-          <span class="rule-tip">规则：一周内违规满 {{ limit }} 次，本周内无法预约</span>
+          <span class="rule-tip">规则：一天内违规满 {{ limit }} 次，当日禁止预约，次日自动恢复</span>
         </div>
       </div>
 
@@ -28,7 +28,7 @@
       <!-- 概览 -->
       <div class="sum-row">
         <div class="sum"><b>{{ total }}</b><span>有违规的用户</span></div>
-        <div class="sum"><b>{{ restrictedCount }}</b><span>当前被限制预约</span></div>
+        <div class="sum"><b>{{ restrictedCount }}</b><span>今日被禁止预约</span></div>
       </div>
 
       <el-table v-loading="loading" :data="rows" stripe style="width: 100%" @row-click="openDetail">
@@ -43,14 +43,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="信用分" width="100" align="center">
+        <el-table-column label="今日违规" width="110" align="center">
           <template #default="{ row }">
-            <span class="credit" :class="creditClass(row.creditScore)">{{ row.creditScore ?? 100 }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="近 7 天违规" width="120" align="center">
-          <template #default="{ row }">
-            <span class="week-count" :class="{ danger: row.weekCount > 0 }">{{ row.weekCount }}</span>
+            <span class="today-count" :class="{ danger: row.todayCount > 0 }">{{ row.todayCount }}</span>
           </template>
         </el-table-column>
         <el-table-column label="累计违规" width="110" align="center">
@@ -59,7 +54,7 @@
         <el-table-column label="预约权限" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="row.restricted ? 'danger' : 'success'" size="small" effect="light">
-              {{ row.restricted ? '受限' : '正常' }}
+              {{ row.restricted ? '今日受限' : '正常' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -96,9 +91,6 @@
         </el-table-column>
         <el-table-column label="描述" min-width="260">
           <template #default="{ row }">{{ row.description || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="扣分" width="80" align="center">
-          <template #default="{ row }"><span class="deduct">-{{ row.deductScore || 0 }}</span></template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
@@ -137,10 +129,6 @@ const restrictedCount = computed(() => rows.value.filter(r => r.restricted).leng
 const TYPE_TEXT = { 1: '爽约', 2: '超时使用', 3: '恶意取消', 4: '其他' }
 function typeText(t) { return TYPE_TEXT[t] || '其他' }
 function fmt(dt) { return dt ? String(dt).replace('T', ' ').slice(0, 16) : '-' }
-function creditClass(s) {
-  const v = s ?? 100
-  return v < 60 ? 'bad' : v < 90 ? 'warn' : 'good'
-}
 
 async function loadData() {
   loading.value = true
@@ -217,18 +205,9 @@ onMounted(loadData)
   }
 }
 
-.credit {
-  font-weight: 700;
-  &.good { color: #67c23a; }
-  &.warn { color: #e6a23c; }
-  &.bad { color: #f56c6c; }
-}
-
-.week-count { font-weight: 700; color: #606266;
+.today-count { font-weight: 700; color: #606266;
   &.danger { color: #f56c6c; }
 }
-
-.deduct { color: #f56c6c; font-weight: 600; }
 
 .pagination { display: flex; justify-content: center; margin-top: 18px; }
 </style>

@@ -215,6 +215,45 @@ export const api = {
   // 管理端：按用户聚合的违规情况（支持关键词搜索）
   getAdminViolationUsers(params) {
     return request.get('/admin/violations/users', { params })
+  },
+
+  // 系统全局状态：一键闭馆横幅与预约页拦截使用
+  getCampusStatus() {
+    return request.get('/system/campus-status')
+  },
+  campusClose() {
+    return request.post('/system/campus-close')
+  },
+  campusOpen() {
+    return request.post('/system/campus-open')
+  },
+
+  // 站内消息
+  askAdmin(content) {
+    return request.post('/messages/ask', { content })
+  },
+  getMyMessages() {
+    return request.get('/messages/mine')
+  },
+  getMyUnreadCount() {
+    return request.get('/messages/mine/unread')
+  },
+  markMessageRead(id) {
+    return request.put(`/messages/${id}/read`)
+  },
+  getAdminMessages(params) {
+    return request.get('/messages/admin/page', { params })
+  },
+  getAdminUnreadCount() {
+    return request.get('/messages/admin/unread')
+  },
+  replyMessage(askId, content) {
+    return request.post(`/messages/admin/reply/${askId}`, { content })
+  },
+
+  // 智约 AI 机器人
+  aiChat(messages) {
+    return request.post('/ai/chat', { messages })
   }
 }
 

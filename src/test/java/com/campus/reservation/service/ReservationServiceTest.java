@@ -27,6 +27,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +52,8 @@ class ReservationServiceTest {
     private ReservationLogService logService;
     @Mock
     private CheckinCodeService checkinCodeService;
+    @Mock
+    private SystemConfigService systemConfigService;
 
     @InjectMocks
     private ReservationService service;
@@ -109,12 +112,11 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("create：信用分不足 → 403")
-    void create_creditTooLow_forbidden() {
+    @DisplayName("create：当日违规达 3 次 → 403")
+    void create_todayViolationsAtLimit_forbidden() {
         UserContext.set(1L, 0);
-        SysUser u = validUser();
-        u.setCreditScore(59);
-        when(userMapper.selectById(1L)).thenReturn(u);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(violationMapper.selectCount(any())).thenReturn(3L);
         assertThatThrownBy(() -> service.create(validDto()))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 403);
@@ -253,6 +255,70 @@ class ReservationServiceTest {
         assertThat(r.getCheckinFlag()).isEqualTo(0);
     }
 
+    @Test
+    @DisplayName("create：图书馆预约超过次日 → 400")
+    void create_libraryBeyondTomorrow_badRequest() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        ReservationDTO dto = validDto();
+        LocalDateTime start = LocalDateTime.now().plusDays(2).withHour(10).withMinute(0).withSecond(0).withNano(0);
+        dto.setStartTime(start);
+        dto.setEndTime(start.plusHours(1));
+        assertThatThrownBy(() -> service.create(dto))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("create：体育馆预约超过未来一周 → 400")
+    void create_gymBeyondWeek_badRequest() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(4, 1));
+        ReservationDTO dto = validDto();
+        LocalDateTime start = LocalDateTime.now().plusDays(8).withHour(10).withMinute(0).withSecond(0).withNano(0);
+        dto.setStartTime(start);
+        dto.setEndTime(start.plusHours(1));
+        assertThatThrownBy(() -> service.create(dto))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("create：闭馆期间普通用户 → 403")
+    void create_campusClosed_forbidden() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(systemConfigService.isClosed()).thenReturn(true);
+        assertThatThrownBy(() -> service.create(validDto()))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 403);
+    }
+
+    @Test
+    @DisplayName("create：管理员可预约图书馆超过次日的日期 → 成功")
+    void create_adminBypassAdvanceLimit_success() {
+        UserContext.set(99L, 1);
+        SysUser admin = validUser();
+        admin.setId(99L);
+        when(userMapper.selectById(99L)).thenReturn(admin);
+        Resource lib = openResource(3, 1);
+        when(resourceMapper.selectById(1L)).thenReturn(lib);
+        when(holidayMapper.selectCount(any())).thenReturn(0L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+
+        ReservationDTO dto = validDto();
+        LocalDateTime start = LocalDateTime.now().plusDays(30).withHour(10).withMinute(0).withSecond(0).withNano(0);
+        dto.setStartTime(start);
+        dto.setEndTime(start.plusHours(1));
+
+        Reservation r = service.create(dto);
+        assertThat(r.getStatus()).isEqualTo(Reservation.STATUS_PENDING);
+        // 管理员不走当日违规与闭馆拦截
+        verify(violationMapper, never()).selectCount(any());
+    }
+
     // ---------------- 状态流转 ----------------
 
     @Test
@@ -350,7 +416,7 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("refreshStatuses：超时未打卡 → 爽约并扣信用分")
+    @DisplayName("refreshStatuses：超时未打卡 → 仅记一次爽约违规，不再扣分")
     void refreshStatuses_noshow_recordsViolation() {
         Reservation r = new Reservation();
         r.setId(1L);
@@ -360,11 +426,10 @@ class ReservationServiceTest {
         r.setStartTime(LocalDateTime.now().minusHours(1));
         when(reservationMapper.selectList(any())).thenReturn(List.of(r), List.of(), List.of());
         when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
-        when(userMapper.selectById(1L)).thenReturn(validUser());
 
         service.refreshStatuses();
 
         verify(violationMapper).insert(any(Violation.class));
-        verify(userMapper).updateById(any(SysUser.class));
+        verify(userMapper, never()).updateById(any(SysUser.class));
     }
 }

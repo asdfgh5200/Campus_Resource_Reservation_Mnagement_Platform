@@ -169,7 +169,7 @@ async function doCodeCheckin(item) {
 
 async function doCancel(item) {
   try {
-    await ElMessageBox.confirm('确定取消此预约？频繁取消可能影响信用分', '警告', { type: 'warning' })
+    await ElMessageBox.confirm('确定取消此预约？频繁取消会记恶意取消违规，当日违规满 3 次将禁止预约', '警告', { type: 'warning' })
     const res = await api.cancelReservation(item.id)
     if (res.code === 200) {
       ElMessage.success('已取消')

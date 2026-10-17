@@ -23,6 +23,13 @@
           <el-icon><Calendar /></el-icon>
           <template #title>我的预约</template>
         </el-menu-item>
+        <el-menu-item index="/my-messages">
+          <el-icon><ChatDotRound /></el-icon>
+          <template #title>
+            <span>消息中心</span>
+            <el-badge v-if="myUnread > 0" :value="myUnread" class="menu-badge" />
+          </template>
+        </el-menu-item>
         <el-sub-menu v-if="userStore.isAdmin" index="admin">
           <template #title>
             <el-icon><Setting /></el-icon>
@@ -33,6 +40,10 @@
           <el-menu-item index="/admin/resources">资源管理</el-menu-item>
           <el-menu-item index="/admin/courses">课表管理</el-menu-item>
           <el-menu-item index="/admin/violations">违规管理</el-menu-item>
+          <el-menu-item index="/admin/messages">
+            <span>留言回复</span>
+            <el-badge v-if="adminUnread > 0" :value="adminUnread" class="menu-badge" />
+          </el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-aside>
@@ -73,6 +84,14 @@
       </el-header>
 
       <el-main class="main-content">
+        <el-alert
+          v-if="campusClosed"
+          class="closed-banner"
+          type="error"
+          show-icon
+          :closable="false"
+          title="当前已闭馆，普通用户预约已暂停，等待管理员恢复开放"
+        />
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
             <component :is="Component" />
@@ -80,6 +99,9 @@
         </router-view>
       </el-main>
     </el-container>
+
+    <!-- 智约机器人悬浮窗 -->
+    <AiChatWidget />
   </el-container>
 </template>
 
@@ -87,12 +109,19 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import api from '@/api'
+import { ChatDotRound } from '@element-plus/icons-vue'
+import AiChatWidget from '@/components/AiChatWidget.vue'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
 const collapsed = ref(false)
+const campusClosed = ref(false)
+const myUnread = ref(0)
+const adminUnread = ref(0)
+let statusTimer = null
 
 const now = ref(new Date())
 let clockTimer = null
@@ -101,8 +130,22 @@ const clockText = computed(() => {
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 })
-onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000) })
-onBeforeUnmount(() => clearInterval(clockTimer))
+onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000); refreshGlobalStatus(); statusTimer = setInterval(refreshGlobalStatus, 30000) })
+onBeforeUnmount(() => { clearInterval(clockTimer); clearInterval(statusTimer) })
+
+async function refreshGlobalStatus() {
+  try {
+    const res = await api.getCampusStatus()
+    if (res.code === 0 || res.code === 200) campusClosed.value = !!res.data?.closed
+    if (!userStore.isAdmin) {
+      const u = await api.getMyUnreadCount()
+      if (u.code === 0 || u.code === 200) myUnread.value = u.data?.count || 0
+    } else {
+      const a = await api.getAdminUnreadCount()
+      if (a.code === 0 || a.code === 200) adminUnread.value = a.data?.count || 0
+    }
+  } catch (e) { /* 忽略，不阻断页面 */ }
+}
 
 const activeMenu = computed(() => route.path)
 const pageTitle = computed(() => route.meta.title || '校园资源预约平台')
@@ -216,5 +259,14 @@ function onCommand(cmd) {
 .main-content {
   padding: 20px;
   overflow-y: auto;
+}
+
+.closed-banner {
+  margin-bottom: 12px;
+}
+
+.menu-badge {
+  margin-left: 8px;
+  vertical-align: middle;
 }
 </style>

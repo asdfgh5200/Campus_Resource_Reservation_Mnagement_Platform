@@ -1,5 +1,30 @@
 <template>
   <div class="dashboard-page" v-loading="loading">
+    <!-- 一键闭馆 / 恢复开放 -->
+    <el-card shadow="never" class="campus-bar">
+      <div class="cb-inner">
+        <div class="cb-left">
+          <el-icon :size="20" :color="campusClosed ? '#f56c6c' : '#67c23a'">
+            <component :is="campusClosed ? 'WarnTriangleFilled' : 'CircleCheckFilled'" />
+          </el-icon>
+          <span class="cb-title">校园状态：{{ campusClosed ? '已闭馆（普通用户不可预约）' : '开放中' }}</span>
+          <span class="cb-hint">为应对节假日/突发情况，管理员可一键闭馆，恢复后普通用户自动可约</span>
+        </div>
+        <el-button
+          v-if="!campusClosed"
+          type="danger"
+          :loading="switching"
+          @click="doCampusToggle(true)"
+        >一键闭馆</el-button>
+        <el-button
+          v-else
+          type="success"
+          :loading="switching"
+          @click="doCampusToggle(false)"
+        >恢复开放</el-button>
+      </div>
+    </el-card>
+
     <!-- 统计卡片（可点击跳转查看明细） -->
     <div class="stat-cards">
       <div
@@ -60,7 +85,8 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { PieChart, List, ArrowRight } from '@element-plus/icons-vue'
+import { PieChart, List, ArrowRight, WarnTriangleFilled, CircleCheckFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import { api } from '@/api'
 
@@ -69,6 +95,8 @@ const loading = ref(false)
 const chartRef = ref()
 const stats = reactive({})
 const violationUsers = ref(0)
+const campusClosed = ref(false)
+const switching = ref(false)
 let chartInstance = null
 
 const statCards = [
@@ -93,9 +121,10 @@ function goRecent(item) {
 async function loadData() {
   loading.value = true
   try {
-    const [res, vio] = await Promise.all([
+    const [res, vio, cs] = await Promise.all([
       api.getStats(),
-      api.getAdminViolationUsers({ current: 1, size: 1 })
+      api.getAdminViolationUsers({ current: 1, size: 1 }),
+      api.getCampusStatus()
     ])
     if (res.code === 200) {
       Object.assign(stats, res.data)
@@ -103,8 +132,30 @@ async function loadData() {
       renderChart()
     }
     if (vio.code === 200) violationUsers.value = vio.data?.total || 0
+    if (cs.code === 200 || cs.code === 0) campusClosed.value = !!cs.data?.closed
   } finally {
     loading.value = false
+  }
+}
+
+async function doCampusToggle(toClose) {
+  const tip = toClose
+    ? '确认开启一键闭馆？开启后普通用户将无法新建预约。'
+    : '确认恢复开放？开放后普通用户可重新预约。'
+  try {
+    await ElMessageBox.confirm(tip, '一键闭馆', { type: 'warning' })
+  } catch (e) { return }
+  switching.value = true
+  try {
+    const res = toClose ? await api.campusClose() : await api.campusOpen()
+    if (res.code === 200 || res.code === 0) {
+      campusClosed.value = toClose
+      ElMessage.success(toClose ? '已闭馆' : '已恢复开放')
+    } else {
+      ElMessage.error(res.message || '操作失败')
+    }
+  } finally {
+    switching.value = false
   }
 }
 
@@ -158,6 +209,25 @@ onUnmounted(() => {
 
 <style scoped lang="scss">
 .dashboard-page { max-width: 1200px; margin: 0 auto; }
+
+.campus-bar {
+  margin-bottom: 16px;
+  border-radius: 12px;
+  .cb-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .cb-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .cb-title { font-weight: 600; color: #303133; }
+  .cb-hint { font-size: 12px; color: #909399; }
+}
 
 .stat-cards {
   display: grid;

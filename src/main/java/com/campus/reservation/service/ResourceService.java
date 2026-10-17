@@ -12,6 +12,7 @@ import com.campus.reservation.mapper.ReservationMapper;
 import com.campus.reservation.mapper.ResourceMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
@@ -28,6 +29,7 @@ public class ResourceService {
     private final ResourceMapper resourceMapper;
     private final ReservationMapper reservationMapper;
     private final CourseScheduleMapper courseScheduleMapper;
+    private final MessageService messageService;
 
     public Page<Resource> page(Integer current, Integer size, Integer type, String keyword,
                                Integer status, String building, String floor) {
@@ -163,13 +165,17 @@ public class ResourceService {
         return resource;
     }
 
+    @Transactional
     public Resource update(Resource resource) {
         if (resource.getId() == null) {
             throw BizException.badRequest("资源 ID 不能为空");
         }
-        getById(resource.getId());
+        Resource before = getById(resource.getId());
         resourceMapper.updateById(resource);
-        return getById(resource.getId());
+        Resource after = getById(resource.getId());
+        // 管理员修改已存在预约的资源时，向预约人推送站内通知
+        notifyActiveReservationUsers(before, after, false);
+        return after;
     }
 
     public void delete(Long id) {
@@ -177,16 +183,68 @@ public class ResourceService {
         resourceMapper.deleteById(id);
     }
 
+    @Transactional
     public Resource changeStatus(Long id, Integer status) {
         if (status == null || status < 1 || status > 3) {
             throw BizException.badRequest("状态值不合法（1 可预约 / 2 使用中 / 3 维修中）");
         }
-        getById(id);
+        Resource before = getById(id);
         Resource update = new Resource();
         update.setId(id);
         update.setStatus(status);
         resourceMapper.updateById(update);
-        return getById(id);
+        Resource after = getById(id);
+        notifyActiveReservationUsers(before, after, true);
+        return after;
+    }
+
+    /**
+     * 当资源信息或状态发生变化时，向当前及未来进行中预约的用户推送站内消息。
+     * 普通预约用户看到提示后应及时联系管理员。
+     */
+    private void notifyActiveReservationUsers(Resource before, Resource after, boolean statusOnly) {
+        if (after == null || after.getId() == null) return;
+        boolean statusChanged = !java.util.Objects.equals(before.getStatus(), after.getStatus());
+        boolean timeChanged = !java.util.Objects.equals(before.getOpenTime(), after.getOpenTime())
+                || !java.util.Objects.equals(before.getCloseTime(), after.getCloseTime());
+        boolean nameChanged = !java.util.Objects.equals(before.getName(), after.getName());
+        if (statusOnly && !statusChanged) return;
+        if (!statusChanged && !timeChanged && !nameChanged) return;
+
+        StringBuilder tip = new StringBuilder();
+        tip.append("管理员已调整资源「").append(after.getName()).append("」");
+        if (statusChanged) {
+            tip.append("状态变更：").append(statusLabel(before.getStatus()))
+                    .append(" → ").append(statusLabel(after.getStatus())).append("；");
+        }
+        if (timeChanged) {
+            tip.append("开放时间：").append(before.getOpenTime()).append("-").append(before.getCloseTime())
+                    .append(" → ").append(after.getOpenTime()).append("-").append(after.getCloseTime()).append("；");
+        }
+        if (nameChanged) {
+            tip.append("名称：").append(before.getName()).append(" → ").append(after.getName()).append("；");
+        }
+        tip.append("若影响到您的预约，请及时联系管理员处理。");
+        String content = tip.toString();
+
+        LocalDateTime now = LocalDateTime.now();
+        List<Reservation> affected = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
+                .eq(Reservation::getResourceId, after.getId())
+                .in(Reservation::getStatus, List.of(Reservation.STATUS_PENDING, Reservation.STATUS_IN_USE))
+                .ge(Reservation::getEndTime, now));
+        for (Reservation r : affected) {
+            messageService.notifyUser(r.getUserId(), content);
+        }
+    }
+
+    private static String statusLabel(Integer status) {
+        if (status == null) return "未知";
+        return switch (status) {
+            case 1 -> "可预约";
+            case 2 -> "使用中";
+            case 3 -> "维修中";
+            default -> "未知";
+        };
     }
 
     public List<Resource> listByIds(List<Long> ids) {

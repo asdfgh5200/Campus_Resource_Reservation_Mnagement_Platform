@@ -192,6 +192,8 @@
               <template #title>预约须知</template>
               <ul class="tips-list">
                 <li v-if="resource.resourceType === 2">本实验室限 <b>10 人</b>，以小组为单位预约，组长一人预约即可</li>
+                <li v-if="resource.resourceType === 2 || resource.resourceType === 4">实验室、体育馆仅可预约 <b>未来一周内</b> 的时间</li>
+                <li v-if="resource.resourceType === 3">图书馆最多只能预约到 <b>次日</b></li>
                 <li>打卡时间窗：预约开始前 30 分钟 ~ 开始后 5 分钟，超时未打卡将自动释放空间并记一次爽约</li>
                 <li>使用中可提前释放空间，或暂离（30 分钟；饭点 11:00-12:30 / 17:30-19:00 可暂离 1 小时）</li>
                 <li>同一时间段内只能预约 <b>一个资源</b>；时间不冲突可多次预约（冲突时提交会被拒绝）</li>
@@ -245,7 +247,19 @@ function statusTagType(s) { return { 1: 'success', 2: 'danger', 3: 'warning' }[s
 function disabledDate(date) {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  return date.getTime() < today.getTime()
+  if (date.getTime() < today.getTime()) return true
+  // 按资源类型限制最晚可预约日期：图书馆(3)最多到次日；实验室(2)/体育馆(4)未来一周内
+  const type = resource.value?.resourceType
+  const max = new Date(today)
+  if (type === 3) {
+    max.setDate(max.getDate() + 1)
+  } else if (type === 2 || type === 4) {
+    max.setDate(max.getDate() + 7)
+  } else {
+    return false
+  }
+  max.setHours(23, 59, 59, 999)
+  return date.getTime() > max.getTime()
 }
 
 // ---------- 时段条 ----------

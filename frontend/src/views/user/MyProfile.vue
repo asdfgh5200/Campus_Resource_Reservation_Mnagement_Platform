@@ -10,14 +10,10 @@
             <el-tag :type="user.role === 1 ? 'danger' : 'primary'" size="small" effect="light">
               {{ user.role === 1 ? '管理员' : '普通用户' }}
             </el-tag>
-            <el-tag v-if="summary.restricted" type="danger" size="small" effect="dark">本周禁止预约</el-tag>
+            <el-tag v-if="summary.restricted" type="danger" size="small" effect="dark">今日禁止预约</el-tag>
           </div>
           <div class="sub-row">
             <span class="account">@{{ user.username }}</span>
-            <span class="credit">
-              信用分
-              <b :class="creditClass">{{ user.creditScore ?? 100 }}</b>
-            </span>
           </div>
         </div>
       </div>
@@ -41,20 +37,20 @@
       <template #header>
         <div class="card-header">
           <span class="title">违规情况</span>
-          <span class="rule">规则：一周内违规满 {{ summary.limit }} 次，本周内无法预约</span>
+          <span class="rule">规则：一天内违规满 {{ summary.limit }} 次，当日禁止预约，次日自动恢复</span>
         </div>
       </template>
 
       <el-alert v-if="summary.restricted" type="error" :closable="false" show-icon class="restrict-tip">
         <template #title>
-          你近 7 天已有 {{ summary.weekCount }} 次违规记录，本周内暂无法预约，请等待违规记录超出 7 天窗口后恢复。
+          你今日已有 {{ summary.todayCount }} 次违规记录，今日禁止预约，次日自动恢复。
         </template>
       </el-alert>
 
       <div class="stat-row">
         <div class="stat">
-          <div class="stat-num" :class="{ danger: summary.weekCount > 0 }">{{ summary.weekCount }}</div>
-          <div class="stat-label">近 7 天违规</div>
+          <div class="stat-num" :class="{ danger: summary.todayCount > 0 }">{{ summary.todayCount }}</div>
+          <div class="stat-label">今日违规</div>
         </div>
         <div class="stat">
           <div class="stat-num">{{ summary.totalCount }}</div>
@@ -62,13 +58,13 @@
         </div>
         <div class="stat">
           <div class="stat-num">{{ summary.limit }}</div>
-          <div class="stat-label">每周上限</div>
+          <div class="stat-label">每日上限</div>
         </div>
         <div class="stat">
           <div class="stat-num" :class="summary.restricted ? 'danger' : 'ok'">
             {{ summary.restricted ? '受限' : '正常' }}
           </div>
-          <div class="stat-label">预约权限</div>
+          <div class="stat-label">今日预约权限</div>
         </div>
       </div>
 
@@ -80,11 +76,6 @@
         </el-table-column>
         <el-table-column label="描述" min-width="260">
           <template #default="{ row }">{{ row.description || '-' }}</template>
-        </el-table-column>
-        <el-table-column label="扣分" width="80" align="center">
-          <template #default="{ row }">
-            <span class="deduct">-{{ row.deductScore || 0 }}</span>
-          </template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
@@ -102,7 +93,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '@/api'
 import { useUserStore } from '@/stores/user'
 
@@ -110,12 +101,7 @@ const userStore = useUserStore()
 const loading = ref(false)
 const user = ref({})
 const violations = ref([])
-const summary = reactive({ weekCount: 0, totalCount: 0, limit: 3, restricted: false })
-
-const creditClass = computed(() => {
-  const s = user.value.creditScore ?? 100
-  return s < 60 ? 'bad' : s < 90 ? 'warn' : 'good'
-})
+const summary = reactive({ todayCount: 0, totalCount: 0, limit: 3, restricted: false })
 
 const TYPE_TEXT = { 1: '爽约', 2: '超时使用', 3: '恶意取消', 4: '其他' }
 function typeText(t) { return TYPE_TEXT[t] || '其他' }
@@ -163,13 +149,6 @@ onMounted(loadData)
       }
       .sub-row { display: flex; align-items: center; gap: 16px; margin-top: 6px;
         .account { font-size: 13px; color: #909399; }
-        .credit { font-size: 13px; color: #606266;
-          b { font-size: 15px; margin-left: 4px;
-            &.good { color: #67c23a; }
-            &.warn { color: #e6a23c; }
-            &.bad { color: #f56c6c; }
-          }
-        }
       }
     }
   }
@@ -191,6 +170,5 @@ onMounted(loadData)
       .stat-label { margin-top: 4px; font-size: 12px; color: #909399; }
     }
   }
-  .deduct { color: #f56c6c; font-weight: 600; }
 }
 </style>

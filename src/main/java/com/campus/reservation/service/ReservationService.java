@@ -34,16 +34,18 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ReservationService {
 
-    /** 信用分低于该值限制预约 */
-    public static final int CREDIT_THRESHOLD = 60;
-    /** 一周内违规次数达到该值，本周内禁止预约 */
-    public static final int WEEKLY_VIOLATION_LIMIT = 3;
+    /** 一日内违规次数达到该值，当日禁止预约（次日自动恢复） */
+    public static final int DAILY_VIOLATION_LIMIT = 3;
     /** 可提前打卡的分钟数（预约开始前） */
     public static final int CHECKIN_ADVANCE_MINUTES = 30;
     /** 开始后仍可打卡的分钟数，超过则自动爽约并释放空间 */
     public static final int CHECKIN_LATE_MINUTES = 5;
     /** 30 天内取消次数达到该值记恶意取消 */
     public static final int CANCEL_LIMIT = 3;
+    /** 实验室(2)/体育馆(4)：仅可预约未来一周内的时间（含第 7 天） */
+    public static final int LAB_GYM_ADVANCE_DAYS = 7;
+    /** 图书馆(3)：最多只能预约到次日 */
+    public static final int LIBRARY_ADVANCE_DAYS = 1;
     /** 普通暂离时长（分钟） */
     public static final int AWAY_MINUTES = 30;
     /** 饭点暂离时长（分钟） */
@@ -65,9 +67,16 @@ public class ReservationService {
     private final ViolationMapper violationMapper;
     private final ReservationLogService logService;
     private final CheckinCodeService checkinCodeService;
+    private final SystemConfigService systemConfigService;
+
+    /** 当前登录者是否为管理员（role=1） */
+    private static boolean isAdmin() {
+        UserContext.LoginUser ctx = UserContext.get();
+        return ctx != null && ctx.getRole() != null && ctx.getRole() == 1;
+    }
 
     /**
-     * 创建预约：规则校验（信用分/资源状态/节假日/开放时间）+ 时间冲突检测（预约时长不设上限）。
+     * 创建预约：规则校验（当日违规次数/资源状态/节假日/开放时间）+ 时间冲突检测（预约时长不设上限）。
      * 冲突判定采用半开区间 [start, end)：newStart < existEnd AND newEnd > existStart。
      */
     @Transactional
@@ -83,17 +92,20 @@ public class ReservationService {
         if (user == null || user.getStatus() == null || user.getStatus() != 1) {
             throw BizException.forbidden("账号不可用");
         }
-        if (user.getCreditScore() != null && user.getCreditScore() < CREDIT_THRESHOLD) {
-            throw BizException.forbidden("信用分不足，暂无法预约");
+        // 一键闭馆：闭馆期间禁止普通用户预约，管理员不受限
+        if (!isAdmin() && systemConfigService.isClosed()) {
+            throw BizException.forbidden("当前校园已闭馆，暂停预约，请等待管理员开放");
         }
-        // 一周内违规达 3 次 → 本周内禁止预约
-        Long weekViolations = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
-                .eq(Violation::getUserId, userId)
-                .eq(Violation::getStatus, 1)
-                .ge(Violation::getCreatedAt, LocalDateTime.now().minusDays(7)));
-        if (weekViolations != null && weekViolations >= WEEKLY_VIOLATION_LIMIT) {
-            throw BizException.forbidden(String.format(
-                    "近 7 天内已有 %d 次违规记录，本周内暂无法预约", weekViolations));
+        // 当日违规达 3 次 → 今日禁止预约；统计口径为自然日，次日 0 点后自动恢复；管理员不受限
+        if (!isAdmin()) {
+            Long todayViolations = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
+                    .eq(Violation::getUserId, userId)
+                    .eq(Violation::getStatus, 1)
+                    .ge(Violation::getCreatedAt, LocalDate.now().atStartOfDay()));
+            if (todayViolations != null && todayViolations >= DAILY_VIOLATION_LIMIT) {
+                throw BizException.forbidden(String.format(
+                        "今日已有 %d 次违规记录，今日禁止预约，次日自动恢复", todayViolations));
+            }
         }
         Resource resource = resourceMapper.selectById(dto.getResourceId());
         if (resource == null) {
@@ -123,6 +135,22 @@ public class ReservationService {
         if (start.toLocalTime().isBefore(resource.getOpenTime())
                 || end.toLocalTime().isAfter(resource.getCloseTime())) {
             throw BizException.badRequest("预约时段需在开放时间内（" + resource.getOpenTime() + " - " + resource.getCloseTime() + "）");
+        }
+
+        // 按资源类型限制可提前预约的日期范围（管理员不受限）：
+        // 实验室(2)/体育馆(4)仅可预约未来一周内；图书馆(3)最多只能预约到次日
+        if (!isAdmin()) {
+            Integer rtype = resource.getResourceType();
+            LocalDate resToday = LocalDate.now();
+            LocalDate resStartDate = start.toLocalDate();
+            if (rtype != null && (rtype == 2 || rtype == 4)
+                    && resStartDate.isAfter(resToday.plusDays(LAB_GYM_ADVANCE_DAYS))) {
+                throw BizException.badRequest("实验室、体育馆仅可预约未来一周内的时间");
+            }
+            if (rtype != null && rtype == 3
+                    && resStartDate.isAfter(resToday.plusDays(LIBRARY_ADVANCE_DAYS))) {
+                throw BizException.badRequest("图书馆最多只能预约到次日");
+            }
         }
 
         // 同一用户在**同一时间段**内只能有一个进行中的预约（跨资源按时间冲突判定；不冲突可多次预约）
@@ -213,7 +241,7 @@ public class ReservationService {
             r.setStatus(Reservation.STATUS_NOSHOW);
             reservationMapper.updateById(r);
             recordViolation(r.getUserId(), r.getId(), Violation.TYPE_NOSHOW,
-                    "超过打卡时限未完成打卡，记一次爽约", 10);
+                    "超过打卡时限未完成打卡，记一次爽约");
             writeLog(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_NOSHOW,
                     String.format("超过打卡时限（开始后 %d 分钟内未打卡），系统自动释放空间并记为爽约", CHECKIN_LATE_MINUTES));
         }
@@ -227,7 +255,7 @@ public class ReservationService {
             r.setAwayUntil(null);
             reservationMapper.updateById(r);
             recordViolation(r.getUserId(), r.getId(), Violation.TYPE_OVERTIME,
-                    "暂离超时未返回，记一次违规", 5);
+                    "暂离超时未返回，记一次违规");
             writeLog(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_AWAY_TIMEOUT,
                     "暂离超时未返回，系统自动释放空间并记违规一次");
         }
@@ -355,7 +383,7 @@ public class ReservationService {
                 .ge(Reservation::getCreatedAt, LocalDateTime.now().minusDays(30)));
         if (cancelCnt >= CANCEL_LIMIT) {
             recordViolation(reservation.getUserId(), id, Violation.TYPE_BAD_CANCEL,
-                    "30 天内取消预约达 " + cancelCnt + " 次，记恶意取消", 5);
+                    "30 天内取消预约达 " + cancelCnt + " 次，记恶意取消");
         }
         return reservation;
     }
@@ -502,23 +530,15 @@ public class ReservationService {
         logService.record(userId, reservationId, resourceId, resourceName, action, detail);
     }
 
-    /** 登记违规并扣减信用分（下限 0） */
-    private void recordViolation(Long userId, Long reservationId, int type, String description, int deductScore) {
+    /** 记录一次违规：仅落库供管理端查阅，不再使用信用分计法 */
+    private void recordViolation(Long userId, Long reservationId, int type, String description) {
         Violation violation = new Violation();
         violation.setUserId(userId);
         violation.setReservationId(reservationId);
         violation.setType(type);
         violation.setDescription(description);
-        violation.setDeductScore(deductScore);
+        violation.setDeductScore(0);
         violation.setStatus(1);
         violationMapper.insert(violation);
-
-        SysUser user = userMapper.selectById(userId);
-        if (user != null) {
-            SysUser update = new SysUser();
-            update.setId(userId);
-            update.setCreditScore(Math.max(0, (user.getCreditScore() == null ? 100 : user.getCreditScore()) - deductScore));
-            userMapper.updateById(update);
-        }
     }
 }
