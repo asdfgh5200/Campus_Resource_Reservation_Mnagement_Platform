@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * ReservationService 单元测试：Mock 全部 Mapper 与外部 Service，不启动 Spring、不连接 MySQL。
- * 重点覆盖 create 的核心业务规则（13 条校验分支）与状态流转（取消/打卡/提前释放/暂离/爽约自动流转）。
+ * 重点覆盖 create 的核心业务规则（参数/信用分/资源状态/时段冲突/容量等校验分支）与状态流转（取消/打卡/提前释放/暂离/爽约自动流转）。
  */
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
@@ -167,16 +167,19 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("create：单次时长超限 → 400")
-    void create_durationOverLimit_badRequest() {
+    @DisplayName("create：预约时长不设上限 → 长时段也能创建成功")
+    void create_longDuration_allowed() {
         UserContext.set(1L, 0);
         when(userMapper.selectById(1L)).thenReturn(validUser());
         when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        when(holidayMapper.selectCount(any())).thenReturn(0L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+
         ReservationDTO dto = validDto();
-        dto.setEndTime(dto.getStartTime().plusHours(3)); // 180 分钟 > 120
-        assertThatThrownBy(() -> service.create(dto))
-                .isInstanceOf(BizException.class)
-                .hasFieldOrPropertyWithValue("code", 400);
+        dto.setEndTime(dto.getStartTime().plusHours(6)); // 360 分钟，旧规则会拒绝
+
+        Reservation r = service.create(dto);
+        assertThat(r.getStatus()).isEqualTo(Reservation.STATUS_PENDING);
     }
 
     @Test
@@ -203,7 +206,8 @@ class ReservationServiceTest {
         Reservation exist = new Reservation();
         exist.setStartTime(dto.getStartTime());
         exist.setEndTime(dto.getEndTime());
-        when(reservationMapper.selectList(any())).thenReturn(List.of(exist));
+        // 第一次查询是"本人同时间段冲突"校验（无），第二次是"资源时段冲突"校验（有）
+        when(reservationMapper.selectList(any())).thenReturn(List.of(), List.of(exist));
 
         assertThatThrownBy(() -> service.create(dto))
                 .isInstanceOf(BizException.class)
@@ -226,7 +230,8 @@ class ReservationServiceTest {
         exist.setHeadcount(2);
         exist.setStartTime(dto.getStartTime());
         exist.setEndTime(dto.getEndTime());
-        when(reservationMapper.selectList(any())).thenReturn(List.of(exist));
+        // 第一次查询是"本人同时间段冲突"校验（无），第二次返回该时段已占用的体育馆预约
+        when(reservationMapper.selectList(any())).thenReturn(List.of(), List.of(exist));
 
         assertThatThrownBy(() -> service.create(dto))
                 .isInstanceOf(BizException.class)

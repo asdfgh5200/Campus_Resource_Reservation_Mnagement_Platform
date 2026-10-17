@@ -67,7 +67,7 @@ public class ReservationService {
     private final CheckinCodeService checkinCodeService;
 
     /**
-     * 创建预约：规则校验（信用分/资源状态/节假日/开放时间/时长上限）+ 时间冲突检测。
+     * 创建预约：规则校验（信用分/资源状态/节假日/开放时间）+ 时间冲突检测（预约时长不设上限）。
      * 冲突判定采用半开区间 [start, end)：newStart < existEnd AND newEnd > existStart。
      */
     @Transactional
