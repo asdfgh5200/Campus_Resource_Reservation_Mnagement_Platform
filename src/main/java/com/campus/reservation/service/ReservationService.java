@@ -76,6 +76,9 @@ public class ReservationService {
         if (dto.getResourceId() == null || dto.getStartTime() == null || dto.getEndTime() == null) {
             throw BizException.badRequest("缺少必要参数（resourceId/startTime/endTime）");
         }
+        // 并发安全：事务内第一条查询即锁住资源行，同一资源的并发请求在此串行化。
+        // 必须前置：若晚于普通 SELECT，RR 隔离级别下读快照已建立，拿锁后仍会漏读对手刚提交的预约
+        resourceMapper.lockForReservation(dto.getResourceId());
         SysUser user = userMapper.selectById(userId);
         if (user == null || user.getStatus() == null || user.getStatus() != 1) {
             throw BizException.forbidden("账号不可用");
@@ -151,11 +154,13 @@ public class ReservationService {
         if (headcount < 1) {
             throw BizException.badRequest("使用人数至少为 1 人");
         }
+        // 冲突查询用锁定读（当前读），不受事务早期快照影响，确保能看到已提交的并发预约
         List<Reservation> overlapping = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
                 .eq(Reservation::getResourceId, dto.getResourceId())
                 .in(Reservation::getStatus, List.of(Reservation.STATUS_PENDING, Reservation.STATUS_IN_USE))
                 .lt(Reservation::getStartTime, end)
-                .gt(Reservation::getEndTime, start));
+                .gt(Reservation::getEndTime, start)
+                .last("FOR UPDATE"));
         if (isGym) {
             int capacity = resource.getCapacity() == null ? 0 : resource.getCapacity();
             int occupied = overlapping.stream()
