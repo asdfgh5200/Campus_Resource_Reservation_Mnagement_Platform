@@ -498,13 +498,94 @@ availability = 开放时段 - 课表占用 - 已有预约
 
 ## 🛠 技术栈
 
-<!-- TODO: 补充项目实际使用的技术栈，如后端框架、前端框架、数据库等 -->
+### 后端
+
+| 技术 | 版本 | 用途 |
+| ---- | ---- | ---- |
+| Java | 17（兼容至 25） | 开发语言 |
+| Spring Boot | 3.2.5 | Web 框架（内嵌 Tomcat） |
+| MyBatis-Plus | 3.5.7 | ORM、分页、逻辑删除、字段自动填充 |
+| MySQL | 8.x | 数据库（utf8mb4，9 张业务表） |
+| JWT（HMAC-SHA256 自实现） | - | 无状态登录令牌，零第三方依赖 |
+| spring-security-crypto | 6.2.x | 仅用 BCrypt 密码哈希，不引入完整 Security |
+| Lombok | 1.18.38 | 样板代码消除 |
+| JUnit 5 + Mockito + AssertJ | 5.10 / 5.17 | 单元测试与并发集成测试 |
+
+### 前端
+
+| 技术 | 版本 | 用途 |
+| ---- | ---- | ---- |
+| Vue | 3.4 | 组合式 API 单文件组件 |
+| Vite | 5.x | 开发服务器与构建（代理 /api → 8080） |
+| Element Plus | 2.7 | UI 组件库 |
+| Pinia | 2.x | 状态管理（登录态 / 用户信息） |
+| Vue Router | 4.x | 路由与登录/角色守卫 |
+| ECharts | 5.5 | 管理端数据统计图表 |
+| Axios | 1.7 | 请求拦截（Bearer 令牌）/ 401 统一处理 |
+| SCSS + 手写 SVG | - | 样式与图书馆可交互座位图 |
+
+### 质量保障
+
+- 77 个自动化测试全部通过（Service 层单测 + 安全工具类测试）
+- 服务层并发集成测试：10 线程同刻抢单验证无超卖（悲观锁修复的回归证据）
+- JMeter 5.6.3 HTTP 级压测：集合点同刻发令，验证全链路并发正确性与响应性能（见 `jmeter/` 目录）
 
 ---
 
 ## 🚀 快速开始
 
+### 环境要求
+
+| 依赖 | 版本要求 |
+| ---- | ---- |
+| JDK | 17 及以上（25 亦可，构建配置已适配） |
+| Maven | 3.8+ |
+| MySQL | 8.x |
+| Node.js | 18+（前端） |
+
+### 1. 初始化数据库
+
+表结构无需手动执行，启动时由 `schema.sql` 自动创建（幂等，可重复执行）；首次启动检测到空库时会自动写入演示数据（管理员账号 `admin` / `admin`、286 个资源、示例预约）。
+
+```sql
+CREATE DATABASE IF NOT EXISTS campus_reservation DEFAULT CHARSET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+### 2. 配置数据库凭据
+
 > ⚙️ **数据库凭据**：`src/main/resources/application.yml` 中的连接用户名/密码通过环境变量注入，默认值为 `root` / `your-mysql-password`（占位符，不含真实密码）。
 > 启动后端前请先提供真实密码，例如 PowerShell：`$env:DB_PASSWORD='你的密码'`（也可用 `DB_USERNAME` 覆盖用户名）。
+> 在 IDEA 中运行时，可在 Run Configuration → Environment variables 里设置；**请勿将真实密码提交到仓库**。
 
-<!-- TODO: 补充环境要求、安装步骤、启动方式等 -->
+### 3. 启动后端（端口 8080）
+
+```powershell
+$env:DB_PASSWORD='你的MySQL密码'
+mvn spring-boot:run
+# 或在 IDEA 中直接运行 CampusReservationApplication
+```
+
+### 4. 启动前端（端口 5173，Vite 代理 /api → 8080）
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+浏览器访问 http://localhost:5173，使用 `admin / admin` 登录管理端，或注册普通用户。
+
+### 5. 运行测试
+
+```powershell
+mvn test                    # 77 个单元/集成测试（并发测试需本地 MySQL 运行）
+```
+
+### 6. JMeter 并发压测（可选，验收演示用）
+
+```powershell
+# 先启动后端，再注册压测账号（一次性），最后执行压测
+jmeter -t jmeter\register-users.jmx   # GUI 中运行一次（或命令行 -n 模式）
+jmeter -n -t jmeter\reservation-stress.jmx -l jmeter\result.jtl -e -o jmeter\report
+# 预期：成功=1、冲突409=19，结论写入 jmeter/stress-result.txt
+```
