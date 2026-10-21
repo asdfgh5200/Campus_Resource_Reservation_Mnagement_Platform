@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.UserContext;
+import com.campus.reservation.entity.Reservation;
 import com.campus.reservation.entity.UserMessage;
+import com.campus.reservation.mapper.ReservationMapper;
 import com.campus.reservation.mapper.SysUserMapper;
 import com.campus.reservation.mapper.UserMessageMapper;
 import com.campus.reservation.entity.SysUser;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +32,12 @@ public class MessageService {
 
     private final UserMessageMapper messageMapper;
     private final SysUserMapper userMapper;
+    private final ReservationMapper reservationMapper;
+
+    /** 广播范围：全体正常用户 */
+    public static final String SCOPE_ALL = "all";
+    /** 广播范围：当前有进行中预约（待打卡/使用中）的用户 */
+    public static final String SCOPE_ACTIVE = "active";
 
     /** 用户给管理员留言 */
     @Transactional
@@ -150,6 +159,42 @@ public class MessageService {
         ask.setIsRead(1);
         messageMapper.updateById(ask);
         return reply;
+    }
+
+    /**
+     * 管理员广播通知：向指定范围用户群发 direction=2 的系统通知。
+     * scope=all 全体正常用户（role=0、status=1）；scope=active 当前持有待打卡/使用中且未结束预约的用户。
+     * 返回成功推送人数。
+     */
+    @Transactional
+    public int broadcast(String content, String scope) {
+        UserContext.requireAdmin();
+        if (!StringUtils.hasText(content)) {
+            throw BizException.badRequest("通知内容不能为空");
+        }
+        if (content.length() > 1000) {
+            throw BizException.badRequest("通知内容不能超过 1000 字");
+        }
+        List<Long> userIds;
+        if (SCOPE_ACTIVE.equalsIgnoreCase(scope)) {
+            userIds = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
+                            .in(Reservation::getStatus, List.of(Reservation.STATUS_PENDING, Reservation.STATUS_IN_USE))
+                            .ge(Reservation::getEndTime, LocalDateTime.now())).stream()
+                    .map(Reservation::getUserId)
+                    .distinct()
+                    .toList();
+        } else {
+            userIds = userMapper.selectList(Wrappers.<SysUser>lambdaQuery()
+                            .eq(SysUser::getRole, 0)
+                            .eq(SysUser::getStatus, 1)).stream()
+                    .map(SysUser::getId)
+                    .toList();
+        }
+        String text = content.trim();
+        for (Long uid : userIds) {
+            notifyUser(uid, text);
+        }
+        return userIds.size();
     }
 
     /**

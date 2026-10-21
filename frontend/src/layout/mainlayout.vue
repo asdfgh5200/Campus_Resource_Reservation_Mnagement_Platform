@@ -23,7 +23,7 @@
           <el-icon><Calendar /></el-icon>
           <template #title>我的预约</template>
         </el-menu-item>
-        <el-menu-item index="/my-messages">
+        <el-menu-item index="/my-messages" v-if="!userStore.isAdmin">
           <el-icon><ChatDotRound /></el-icon>
           <template #title>
             <span>消息中心</span>
@@ -40,6 +40,7 @@
           <el-menu-item index="/admin/resources">资源管理</el-menu-item>
           <el-menu-item index="/admin/courses">课表管理</el-menu-item>
           <el-menu-item index="/admin/violations">违规管理</el-menu-item>
+          <el-menu-item index="/admin/closures">闭馆管理</el-menu-item>
           <el-menu-item index="/admin/messages">
             <span>留言回复</span>
             <el-badge v-if="adminUnread > 0" :value="adminUnread" class="menu-badge" />
@@ -130,8 +131,8 @@ const clockText = computed(() => {
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 })
-onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000); refreshGlobalStatus(); statusTimer = setInterval(refreshGlobalStatus, 30000) })
-onBeforeUnmount(() => { clearInterval(clockTimer); clearInterval(statusTimer) })
+onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000); refreshGlobalStatus(); statusTimer = setInterval(refreshGlobalStatus, 30000); window.addEventListener('campus-unread-changed', refreshGlobalStatus) })
+onBeforeUnmount(() => { clearInterval(clockTimer); clearInterval(statusTimer); window.removeEventListener('campus-unread-changed', refreshGlobalStatus) })
 
 async function refreshGlobalStatus() {
   try {

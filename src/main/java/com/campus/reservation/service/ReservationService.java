@@ -68,6 +68,7 @@ public class ReservationService {
     private final ReservationLogService logService;
     private final CheckinCodeService checkinCodeService;
     private final SystemConfigService systemConfigService;
+    private final ClosureService closureService;
 
     /** 当前登录者是否为管理员（role=1） */
     private static boolean isAdmin() {
@@ -123,6 +124,10 @@ public class ReservationService {
 
         LocalDateTime start = dto.getStartTime();
         LocalDateTime end = dto.getEndTime();
+        // 细粒度类型闭馆：命中实验室/图书馆/体育馆的闭馆时段则禁止预约（管理员不受限，与总体闭馆一致）
+        if (!isAdmin() && closureService.isClosedAt(resource.getResourceType(), start, end)) {
+            throw BizException.conflict("该类型资源在此时段已闭馆，暂不可预约");
+        }
         if (!start.isBefore(end)) {
             throw BizException.badRequest("结束时间必须晚于开始时间");
         }

@@ -2,7 +2,10 @@ package com.campus.reservation.service;
 
 import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.UserContext;
+import com.campus.reservation.entity.Reservation;
+import com.campus.reservation.entity.SysUser;
 import com.campus.reservation.entity.UserMessage;
+import com.campus.reservation.mapper.ReservationMapper;
 import com.campus.reservation.mapper.SysUserMapper;
 import com.campus.reservation.mapper.UserMessageMapper;
 import org.junit.jupiter.api.AfterEach;
@@ -14,10 +17,13 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,6 +37,8 @@ class MessageServiceTest {
     private UserMessageMapper messageMapper;
     @Mock
     private SysUserMapper userMapper;
+    @Mock
+    private ReservationMapper reservationMapper;
 
     @InjectMocks
     private MessageService service;
@@ -111,5 +119,53 @@ class MessageServiceTest {
         assertThat(v.getUserId()).isEqualTo(99L);
         assertThat(v.getDirection()).isEqualTo(UserMessage.DIRECTION_ADMIN_TO_USER);
         assertThat(v.getRefId()).isNull();
+    }
+
+    @Test
+    @DisplayName("broadcast：非管理员调用 → 403")
+    void broadcast_nonAdmin_forbidden() {
+        UserContext.set(10L, 0);
+        assertThatThrownBy(() -> service.broadcast("紧急通知", MessageService.SCOPE_ALL))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 403);
+    }
+
+    @Test
+    @DisplayName("broadcast：scope=all 向全体正常用户群发 → 每人一条 direction=2")
+    void broadcast_all_sendsToEachUser() {
+        UserContext.set(1L, 1);
+        SysUser u1 = new SysUser();
+        u1.setId(11L);
+        SysUser u2 = new SysUser();
+        u2.setId(12L);
+        when(userMapper.selectList(any())).thenReturn(List.of(u1, u2));
+
+        int sent = service.broadcast("今日体育馆临时闭馆", MessageService.SCOPE_ALL);
+
+        assertThat(sent).isEqualTo(2);
+        ArgumentCaptor<UserMessage> cap = ArgumentCaptor.forClass(UserMessage.class);
+        verify(messageMapper, times(2)).insert(cap.capture());
+        assertThat(cap.getAllValues()).allSatisfy(m -> {
+            assertThat(m.getDirection()).isEqualTo(UserMessage.DIRECTION_ADMIN_TO_USER);
+            assertThat(m.getRefId()).isNull();
+        });
+    }
+
+    @Test
+    @DisplayName("broadcast：scope=active 仅向有进行中预约的用户去重群发")
+    void broadcast_active_dedupesReservationOwners() {
+        UserContext.set(1L, 1);
+        Reservation r1 = new Reservation();
+        r1.setUserId(21L);
+        Reservation r2 = new Reservation();
+        r2.setUserId(21L);
+        Reservation r3 = new Reservation();
+        r3.setUserId(22L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of(r1, r2, r3));
+
+        int sent = service.broadcast("请提前到场打卡", MessageService.SCOPE_ACTIVE);
+
+        assertThat(sent).isEqualTo(2);
+        verify(messageMapper, times(2)).insert(any(UserMessage.class));
     }
 }

@@ -159,6 +159,21 @@ CREATE TABLE IF NOT EXISTS `system_config` (
     PRIMARY KEY (`config_key`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '系统配置表（一键闭馆等全局开关）';
 
+CREATE TABLE IF NOT EXISTS `campus_closure` (
+    `id`            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `resource_type` TINYINT      NOT NULL COMMENT '闭馆类型：2 实验室、3 图书馆、4 体育馆',
+    `closure_date`  DATE         NOT NULL COMMENT '闭馆日期',
+    `start_time`    TIME         NOT NULL COMMENT '闭馆开始时刻',
+    `end_time`      TIME         NOT NULL COMMENT '闭馆结束时刻',
+    `reason`        VARCHAR(255) DEFAULT NULL COMMENT '闭馆原因',
+    `enabled`       TINYINT      NOT NULL DEFAULT 1 COMMENT '是否生效：1 生效、0 已撤销',
+    `created_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted`       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (`id`),
+    KEY `idx_type_date` (`resource_type`, `closure_date`)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT '按资源类型的定时闭馆';
+
 CREATE TABLE IF NOT EXISTS `user_message` (
     `id`         BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键',
     `user_id`    BIGINT        NOT NULL COMMENT '所属用户 ID（留言=发起人，回复/通知=接收人）',

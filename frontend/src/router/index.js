@@ -19,6 +19,7 @@ const routes = [
       { path: 'admin/resources', name: 'AdminResources', component: () => import('@/views/admin/ResourceManage.vue'), meta: { title: '资源管理', admin: true } },
       { path: 'admin/courses', name: 'AdminCourses', component: () => import('@/views/admin/CourseManage.vue'), meta: { title: '课表管理', admin: true } },
       { path: 'admin/violations', name: 'AdminViolations', component: () => import('@/views/admin/ViolationManage.vue'), meta: { title: '违规管理', admin: true } },
+      { path: 'admin/closures', name: 'AdminClosures', component: () => import('@/views/admin/ClosureManage.vue'), meta: { title: '闭馆管理', admin: true } },
       { path: 'admin/messages', name: 'AdminMessages', component: () => import('@/views/admin/MessageManage.vue'), meta: { title: '留言回复', admin: true } }
     ]
   },

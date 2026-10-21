@@ -228,6 +228,17 @@ export const api = {
     return request.post('/system/campus-open')
   },
 
+  // 细粒度类型闭馆
+  getClosures() {
+    return request.get('/system/closures')
+  },
+  addClosure(data) {
+    return request.post('/system/closures', data)
+  },
+  deleteClosure(id) {
+    return request.delete(`/system/closures/${id}`)
+  },
+
   // 站内消息
   askAdmin(content) {
     return request.post('/messages/ask', { content })
@@ -249,6 +260,9 @@ export const api = {
   },
   replyMessage(askId, content) {
     return request.post(`/messages/admin/reply/${askId}`, { content })
+  },
+  broadcastMessage(content, scope) {
+    return request.post('/messages/admin/broadcast', { content, scope })
   },
 
   // 智约 AI 机器人

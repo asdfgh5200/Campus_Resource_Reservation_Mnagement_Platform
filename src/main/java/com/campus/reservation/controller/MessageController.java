@@ -74,4 +74,11 @@ public class MessageController {
         UserContext.requireAdmin();
         return Result.ok(messageService.reply(askId, body.get("content")));
     }
+
+    /** 管理端：广播通知（scope=all 全体用户 / active 正在使用中的用户） */
+    @PostMapping("/admin/broadcast")
+    public Result<Map<String, Object>> broadcast(@RequestBody Map<String, String> body) {
+        int sent = messageService.broadcast(body.get("content"), body.get("scope"));
+        return Result.ok(Map.of("sent", sent));
+    }
 }

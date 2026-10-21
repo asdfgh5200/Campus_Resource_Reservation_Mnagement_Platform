@@ -96,6 +96,8 @@ async function markRead(m) {
   if (res.code === 0 || res.code === 200) {
     m.isRead = 1
     unreadCount.value = Math.max(0, unreadCount.value - 1)
+    // 通知左侧「消息中心」徽标同步未读数
+    window.dispatchEvent(new Event('campus-unread-changed'))
   }
 }
 

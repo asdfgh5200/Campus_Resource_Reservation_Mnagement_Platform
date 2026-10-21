@@ -131,7 +131,7 @@
                     v-for="seg in timeSegments"
                     :key="seg.start"
                     class="seg"
-                    :class="{ booked: seg.booked, partial: seg.partial, past: seg.past, free: !seg.booked && !seg.partial && !seg.past }"
+                    :class="{ booked: !seg.closed && seg.booked, partial: !seg.closed && seg.partial, past: seg.past, closed: seg.closed, free: !seg.closed && !seg.booked && !seg.partial && !seg.past }"
                     :title="seg.tip"
                     @click="onSegClick(seg)"
                   ></div>
@@ -144,6 +144,7 @@
                   <span v-if="isGym"><i class="dot partial"></i>部分占用</span>
                   <span><i class="dot booked"></i>{{ isGym ? '已满' : '已约' }}</span>
                   <span><i class="dot past"></i>已过</span>
+                  <span v-if="hasClosureToday"><i class="dot closed"></i>闭馆</span>
                 </div>
               </div>
               <span v-else class="timeline-empty">请先选择预约日期</span>
@@ -266,6 +267,37 @@ function disabledDate(date) {
 const bookedSlots = ref([])
 const timeSegments = ref([])
 const timeMarks = ref([])
+
+// ---------- 闭馆状态（全局一键闭馆 + 按类型闭馆窗口） ----------
+const campusClosed = ref(false)
+const closures = ref([])
+
+async function fetchClosureStatus() {
+  try {
+    const [st, cl] = await Promise.all([api.getCampusStatus(), api.getClosures()])
+    campusClosed.value = !!(st.data && st.data.closed)
+    closures.value = cl.code === 200 ? (cl.data || []) : []
+  } catch (e) { /* 闭馆状态获取失败不阻断页面 */ }
+}
+
+/** 某时段 [s, e)（分钟）是否与作用于所选日期的闭馆窗口重叠；全局闭馆时视为全天 */
+function isClosedSegment(s, e) {
+  if (campusClosed.value) return '系统闭馆中'
+  const c = closures.value.find(x =>
+    String(x.resourceType) === String(resource.value?.resourceType) &&
+    String(x.closureDate).slice(0, 10) === form.date &&
+    parseHM(x.startTime) < e && parseHM(x.endTime) > s)
+  return c ? (c.reason ? `闭馆：${c.reason}` : '闭馆中') : null
+}
+
+/** 所选日期是否存在影响本资源的闭馆（控制图例显隐） */
+const hasClosureToday = computed(() => {
+  if (!form.date) return false
+  if (campusClosed.value) return true
+  return closures.value.some(x =>
+    String(x.resourceType) === String(resource.value?.resourceType) &&
+    String(x.closureDate).slice(0, 10) === form.date)
+})
 
 // 实时当前时间（每秒更新）
 const liveNow = ref(new Date())
@@ -419,7 +451,10 @@ function computeSegments() {
     }
     // 今日：当前时间之前的所有 30min 时段不可选
     const past = today && m < nm
-    segs.push({ start: toHM(m), end: toHM(m + 30), booked, partial, past, tip })
+    // 闭馆时段：置灰不可预约（管理员不受限，提交时由后端把关）
+    const closedMsg = past ? null : isClosedSegment(m, m + 30)
+    if (closedMsg) tip = `${toHM(m)}-${toHM(m + 30)} ${closedMsg}`
+    segs.push({ start: toHM(m), end: toHM(m + 30), booked, partial, past, closed: !!closedMsg, tip })
   }
   timeSegments.value = segs
   const span = close - open
@@ -429,6 +464,7 @@ function computeSegments() {
 }
 
 function onSegClick(seg) {
+  if (seg.closed) { ElMessage.warning('该时段已闭馆，暂停预约'); return }
   if (seg.booked || seg.past) return
   form.endTime = seg.end
 }
@@ -503,6 +539,11 @@ async function submitReservation() {
   }
   const duration = parseHM(form.endTime) - startMinVal
   if (duration <= 0) { ElMessage.warning('结束时间必须晚于开始时间'); return }
+  // 前端预校验闭馆时段（后端同样会拦截）
+  if (isClosedSegment(startMinVal, parseHM(form.endTime))) {
+    ElMessage.warning('所选时段处于闭馆期间，暂停预约')
+    return
+  }
 
   submitting.value = true
   try {
@@ -543,6 +584,7 @@ async function submitReservation() {
 onMounted(async () => {
   nowTimer = setInterval(() => { liveNow.value = new Date() }, 1000)
   await loadData()
+  await fetchClosureStatus()
   form.date = todayStr()
   if (isClassroom.value) {
     courseDate.value = todayStr()
@@ -681,6 +723,7 @@ onBeforeUnmount(() => clearInterval(nowTimer))
 .seg.partial { background: #e6a23c; }
 .seg.booked { background: #f56c6c; cursor: not-allowed; }
 .seg.past { background: #dcdfe6; cursor: not-allowed; }
+.seg.closed { background: #bfbfbf; cursor: not-allowed; }
 .timeline-marks {
   display: flex;
   justify-content: space-between;
@@ -705,6 +748,7 @@ onBeforeUnmount(() => clearInterval(nowTimer))
   .dot.partial { background: #e6a23c; }
   .dot.booked { background: #f56c6c; }
   .dot.past { background: #dcdfe6; }
+  .dot.closed { background: repeating-linear-gradient(45deg, #bfbfbf, #bfbfbf 2px, #a8a8a8 2px, #a8a8a8 4px); }
 }
 .timeline-empty { color: #c0c4cc; font-size: 13px; }
 .time-row { display: flex; gap: 8px; width: 100%; }

@@ -54,6 +54,8 @@ class ReservationServiceTest {
     private CheckinCodeService checkinCodeService;
     @Mock
     private SystemConfigService systemConfigService;
+    @Mock
+    private ClosureService closureService;
 
     @InjectMocks
     private ReservationService service;
@@ -153,6 +155,32 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> service.create(validDto()))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("create：普通用户命中类型闭馆时段 → 409")
+    void create_typeClosed_conflict() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        when(closureService.isClosedAt(any(), any(), any())).thenReturn(true);
+        assertThatThrownBy(() -> service.create(validDto()))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 409);
+    }
+
+    @Test
+    @DisplayName("create：管理员不受闭馆限制，不查询闭馆窗口")
+    void create_admin_skipsClosureCheck() {
+        UserContext.set(1L, 1);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        ReservationDTO dto = validDto();
+        dto.setEndTime(dto.getStartTime().minusHours(1)); // 非法时段，触发后续 400
+        assertThatThrownBy(() -> service.create(dto))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+        verify(closureService, never()).isClosedAt(any(), any(), any());
     }
 
     @Test

@@ -1,5 +1,31 @@
 <template>
   <div class="msg-manage">
+    <!-- 广播通知 -->
+    <el-card shadow="never" class="block">
+      <template #header>
+        <div class="hd">
+          <span>发送通知</span>
+          <span class="hd-hint">应对紧急情况，向用户群发站内通知</span>
+        </div>
+      </template>
+      <el-radio-group v-model="broadcastScope" class="scope-group">
+        <el-radio-button value="all">全体用户</el-radio-button>
+        <el-radio-button value="active">正在使用中的用户</el-radio-button>
+      </el-radio-group>
+      <el-input
+        v-model="broadcastDraft"
+        type="textarea"
+        :rows="3"
+        maxlength="1000"
+        show-word-limit
+        class="broadcast-input"
+        placeholder="输入通知内容，将以内站消息形式推送给选中范围用户"
+      />
+      <div class="send-row">
+        <el-button type="primary" :loading="broadcasting" @click="submitBroadcast">发送通知</el-button>
+      </div>
+    </el-card>
+
     <el-card shadow="never" class="block">
       <template #header>
         <div class="hd">
@@ -78,6 +104,30 @@ const replyTarget = ref(null)
 const replyContent = ref('')
 const replying = ref(false)
 
+// 广播通知
+const broadcastScope = ref('all')
+const broadcastDraft = ref('')
+const broadcasting = ref(false)
+
+async function submitBroadcast() {
+  if (!broadcastDraft.value.trim()) {
+    ElMessage.warning('通知内容不能为空')
+    return
+  }
+  broadcasting.value = true
+  try {
+    const res = await api.broadcastMessage(broadcastDraft.value.trim(), broadcastScope.value)
+    if (res.code === 0 || res.code === 200) {
+      ElMessage.success(`已推送给 ${res.data?.sent ?? 0} 位用户`)
+      broadcastDraft.value = ''
+    } else {
+      ElMessage.error(res.message || '发送失败')
+    }
+  } finally {
+    broadcasting.value = false
+  }
+}
+
 function formatTime(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(0, 16)
@@ -139,6 +189,10 @@ onMounted(reload)
 <style scoped lang="scss">
 .block { margin-bottom: 16px; }
 .hd { display: flex; align-items: center; justify-content: space-between; }
+.hd-hint { font-size: 12px; color: #909399; }
+.scope-group { margin-bottom: 12px; }
+.broadcast-input { margin-bottom: 12px; }
+.send-row { text-align: right; }
 .pager { margin-top: 12px; justify-content: flex-end; }
 .origin {
   background: #f5f7fa;

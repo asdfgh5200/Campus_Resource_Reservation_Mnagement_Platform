@@ -38,7 +38,9 @@
           <div class="card-info">
             <span class="info-line"><el-icon><Clock /></el-icon> {{ item.startTime }} → {{ item.endTime }}</span>
             <span class="info-line" v-if="item.checkinFlag"><el-icon><CircleCheck /></el-icon> 已打卡 {{ item.checkinTime }}</span>
-            <span class="info-line away" v-if="isAway(item)"><el-icon><Timer /></el-icon> 暂离中，须于 {{ fmtTime(item.awayUntil) }} 前返回（超时将自动释放并记违规）</span>
+            <span class="info-line away" v-if="isAway(item)"><el-icon><Timer /></el-icon> 暂离中，<b class="cd">{{ countdownText(parseDt(item.awayUntil)) }}</b> 后自动释放（超时记违规）</span>
+            <span class="info-line" v-else-if="item.status === 2 && item.endTime"><el-icon><Timer /></el-icon> 距预约结束 <b class="cd">{{ countdownText(parseDt(item.endTime)) }}</b></span>
+            <span class="info-line" v-if="item.status === 1"><el-icon><AlarmClock /></el-icon> 距打卡截止 <b class="cd" :class="{ urgent: cdSeconds(checkinDeadline(item)) !== null && cdSeconds(checkinDeadline(item)) < 300 }">{{ countdownText(checkinDeadline(item)) }}</b></span>
           </div>
           <div class="card-footer">
             <span class="remark" v-if="item.remark">备注：{{ item.remark }}</span>
@@ -92,7 +94,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Clock, CircleCheck, EditPen, Close, Timer, Delete, View } from '@element-plus/icons-vue'
+import { Clock, CircleCheck, EditPen, Close, Timer, Delete, View, AlarmClock } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/api'
 import { resourceImage } from '@/utils/resourceImage'
@@ -103,9 +105,13 @@ const activeTab = ref('0')
 const reservations = ref([])
 const page = reactive({ current: 1, size: 20 })
 
-// 每分钟刷新一次，用于饭点判断与暂离倒计时
+// 每秒刷新一次：饭点判断 + 打卡截止/暂离超时/预约结束的实时倒计时
 const now = ref(new Date())
 let timer = null
+let lastAutoReload = 0
+
+// 与后端 ReservationService.CHECKIN_LATE_MINUTES 保持一致：开始后 5 分钟内未打卡自动爽约
+const CHECKIN_LATE_MINUTES = 5
 
 // 饭点暂离时段：午餐 11:00-12:30、晚餐 17:30-19:00
 const mealTime = computed(() => {
@@ -117,8 +123,42 @@ function isAway(item) {
   return item.status === 2 && item.awayUntil && new Date(String(item.awayUntil).replace(' ', 'T')) > now.value
 }
 
-function fmtTime(dt) {
-  return dt ? String(dt).replace('T', ' ').slice(11, 16) : ''
+function parseDt(dt) {
+  return dt ? new Date(String(dt).replace(' ', 'T')) : null
+}
+
+/** 待打卡记录的截止时刻 = 预约开始 + 打卡宽限 */
+function checkinDeadline(item) {
+  const s = parseDt(item.startTime)
+  return s ? new Date(s.getTime() + CHECKIN_LATE_MINUTES * 60000) : null
+}
+
+function cdSeconds(target) {
+  if (!target) return null
+  return Math.max(0, Math.floor((target.getTime() - now.value.getTime()) / 1000))
+}
+
+function countdownText(target) {
+  const sec = cdSeconds(target)
+  if (sec === null) return '--:--'
+  const p = (n) => String(n).padStart(2, '0')
+  if (sec >= 3600) return `${Math.floor(sec / 3600)}:${p(Math.floor((sec % 3600) / 60))}:${p(sec % 60)}`
+  return `${p(Math.floor(sec / 60))}:${p(sec % 60)}`
+}
+
+function tick() {
+  now.value = new Date()
+  // 已到截止/超时点但状态还没流转 → 重新拉列表（后端懒惰结算会自动爽约/释放/完成），10s 防抖
+  const hasExpired = reservations.value.some((it) => {
+    if (it.status === 1) { const d = checkinDeadline(it); return d && d <= now.value }
+    if (it.status === 2 && it.awayUntil) { const a = parseDt(it.awayUntil); return a && a <= now.value }
+    if (it.status === 2 && !it.awayUntil && it.endTime) { const e = parseDt(it.endTime); return e && e <= now.value }
+    return false
+  })
+  if (hasExpired && Date.now() - lastAutoReload > 10000) {
+    lastAutoReload = Date.now()
+    loadData()
+  }
 }
 
 function getTypeImage(res) { return resourceImage(res) }
@@ -267,7 +307,7 @@ async function doCancelAway(item) {
 
 onMounted(() => {
   loadData()
-  timer = setInterval(() => { now.value = new Date() }, 60000)
+  timer = setInterval(tick, 1000)
 })
 onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
@@ -370,6 +410,9 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         color: #909399;
 
         &.away { color: #e6a23c; }
+
+        .cd { font-weight: 600; color: #409eff; font-variant-numeric: tabular-nums; }
+        .cd.urgent { color: #f56c6c; }
       }
     }
 
