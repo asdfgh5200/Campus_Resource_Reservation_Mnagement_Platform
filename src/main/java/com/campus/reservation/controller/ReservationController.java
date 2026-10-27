@@ -3,9 +3,11 @@ package com.campus.reservation.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.Result;
 import com.campus.reservation.dto.ReservationDTO;
+import com.campus.reservation.dto.ReservationTraceVO;
 import com.campus.reservation.entity.Reservation;
 import com.campus.reservation.service.ReservationService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,12 +33,14 @@ public class ReservationController {
         return Result.ok(reservationService.create(dto));
     }
 
-    /** 我的预约（分页，status 缺省查全部） */
+    /** 我的预约（分页，status 缺省查全部；date 为可选单日，格式 yyyy-MM-dd） */
     @GetMapping("/my")
     public Result<Page<Reservation>> my(@RequestParam(defaultValue = "1") Integer current,
                                         @RequestParam(defaultValue = "10") Integer size,
-                                        @RequestParam(required = false) Integer status) {
-        return Result.ok(reservationService.my(current, size, status));
+                                        @RequestParam(required = false) Integer status,
+                                        @RequestParam(required = false) String date) {
+        return Result.ok(reservationService.my(current, size, status,
+                StringUtils.hasText(date) ? LocalDate.parse(date) : null));
     }
 
     /** 某资源某日已占用时段（用于前端时段条） */
@@ -50,6 +54,15 @@ public class ReservationController {
     @GetMapping("/{id}")
     public Result<Reservation> detail(@PathVariable Long id) {
         return Result.ok(reservationService.detail(id));
+    }
+
+    /**
+     * 单条预约的「当时情况」：预约本体 + 操作时间线 + 关联违规。
+     * 用户端点击预约卡片 / 违规记录打开侧拉框时调用，只能看自己的（管理员不限）。
+     */
+    @GetMapping("/{id}/trace")
+    public Result<ReservationTraceVO> trace(@PathVariable Long id) {
+        return Result.ok(reservationService.trace(id));
     }
 
     /** 取消预约 */
@@ -69,18 +82,5 @@ public class ReservationController {
     @PostMapping("/{id}/release")
     public Result<Reservation> release(@PathVariable Long id) {
         return Result.ok(reservationService.release(id));
-    }
-
-    /** 暂离（minutes=30 普通暂离；minutes=60 仅饭点可用） */
-    @PostMapping("/{id}/away")
-    public Result<Reservation> away(@PathVariable Long id,
-                                    @RequestParam(required = false) Integer minutes) {
-        return Result.ok(reservationService.away(id, minutes));
-    }
-
-    /** 结束暂离，恢复使用 */
-    @PostMapping("/{id}/away/cancel")
-    public Result<Reservation> cancelAway(@PathVariable Long id) {
-        return Result.ok(reservationService.cancelAway(id));
     }
 }

@@ -26,7 +26,7 @@ public class LocationService {
         double r = radius == null ? 1000 : radius;
         List<Resource> resources = resourceMapper.selectList(Wrappers.<Resource>lambdaQuery()
                 .eq(type != null, Resource::getResourceType, type)
-                .ne(Resource::getStatus, 3));
+                .notIn(Resource::getStatus, Resource.STATUS_REPAIRING, Resource.STATUS_REPORTED));
         List<Map<String, Object>> result = new ArrayList<>();
         for (Resource res : resources) {
             double resLat = res.getLatitude() == null ? 39.908 : res.getLatitude().doubleValue();

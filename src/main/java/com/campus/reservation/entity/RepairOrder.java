@@ -28,6 +28,9 @@ public class RepairOrder {
 
     private Integer status;
 
+    /** 驳回原因：管理员驳回时填写，会随通知发给报修人 */
+    private String rejectReason;
+
     private Long handleUser;
 
     private LocalDateTime handleTime;
@@ -44,4 +47,12 @@ public class RepairOrder {
     /** 关联资源（非数据库字段） */
     @TableField(exist = false)
     private Resource resource;
+
+    /** 报修人姓名（非数据库字段，管理端列表展示） */
+    @TableField(exist = false)
+    private String reporterName;
+
+    /** 报修人学号/账号（非数据库字段，方便管理员核实与回访） */
+    @TableField(exist = false)
+    private String reporterAccount;
 }

@@ -13,7 +13,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // 本地联调时可用 VITE_PROXY_TARGET 指向其它后端端口，默认 8080
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8080',
         changeOrigin: true
       }
     }

@@ -27,13 +27,13 @@ class AiSkillLoaderTest {
     @Test
     void userRoleDoesNotSeeAdminManual() {
         String skills = loader.skillsForRole(AiTool.ROLE_USER);
-        assertThat(skills).doesNotContain("管理员操作（admin）");
+        assertThat(skills).doesNotContain("admin_set_campus_closure");
     }
 
     @Test
     void adminRoleGetsAdminManual() {
         String skills = loader.skillsForRole(AiTool.ROLE_ADMIN);
-        assertThat(skills).contains("管理员操作（admin）");
+        assertThat(skills).contains("admin_set_campus_closure");
         // 管理员同样能看到通用手册
         assertThat(skills).contains("query_resources");
     }

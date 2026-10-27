@@ -9,7 +9,7 @@
 src/main/resources/ai/skills/
 ├── query.md        # 查询类：query_resources / get_busy_slots / list_my_reservations
 ├── reservation.md  # 新建/取消类：propose_reservation / propose_cancel（草案流程）
-└── admin.md        # 管理类：预留壳，当前无管理员级工具
+└── admin.md        # 管理类：admin_set_campus_closure / admin_create_closure / admin_list_closures / admin_revoke_closure（仅管理员会话下发）
 ```
 
 - 代码位置：`src/main/java/com/campus/reservation/ai/`
@@ -40,7 +40,9 @@ src/main/resources/ai/skills/
 
 ---
 
-## 3. 技能清单（当前均为 USER 级）
+## 3. 技能清单
+
+### 3.1~3.5 普通用户技能（USER 级）
 
 ### 3.1 query_resources —— 按类型/关键词查询可用资源
 - 参数：
@@ -78,7 +80,36 @@ src/main/resources/ai/skills/
 - 返回：`{"status":"draft_created","note":"..."}`，并追加草案 `{kind:"cancel_reservation", payload:{reservationId}}`
 - 权限：仅允许取消本人预约；对他人 `reservationId` 返回错误。
 
----
+### 3.6 admin_set_campus_closure —— 一键闭馆 / 恢复开放（仅生成草案）
+- 参数：
+  - `closed` boolean，必填，`true` 闭馆、`false` 恢复开放
+  - `reason` string，可选，会写进发给全体用户的闭馆通知
+- 返回：`{"status":"draft_created"|"noop","note":"..."}`，并追加草案 `{kind:"campus_closure", payload:{closed, reason}}`
+- 说明：全局开关，不带资源类型与日期；已是目标状态时返回 `noop` 不出草案；确认后 `POST /api/system/campus-close|open`，两个方向都会向全体用户群发通知。
+
+### 3.7 admin_create_closure —— 定向闭馆（仅生成草案）
+- 参数：
+  - `closureDate` string，必填，`yyyy-MM-dd`
+  - `startTime` / `endTime` string，必填，`HH:mm`（向后兼容 `HH:mm:ss`）
+  - `resourceType` integer，可选，`2 实验室 / 3 图书馆 / 4 体育馆`（教室不可闭馆）
+  - `resourceId` integer，可选，只闭某个具体资源；传了就以资源真实类型为准，`resourceType` 可省略
+  - `reason` string，可选
+- 返回：草案 `{kind:"create_closure", payload:{resourceType, resourceId, resourceName, closureDate, startTime, endTime, reason, scopeText}}`
+- 校验：时刻已过去、结束早于开始、目标是教室、资源不存在 → 直接返回可自我纠正的错误，不产出草案。
+- 说明：确认后调用 `POST /api/system/closures`，落在该时段的预约会被自动取消并逐人通知；整类闭馆还会向全体用户广播。
+
+### 3.8 admin_list_closures —— 查询当前闭馆现状（只读，立即返回）
+- 参数：无
+- 返回：`{"campusClosed":bool,"count":n,"closures":[{id,scope,resourceType,resourceId,closureDate,startTime,endTime,reason}],"note":"..."}`
+- 调用时机：管理员问「现在闭馆了吗 / 有哪些闭馆安排」；撤销前先用它拿到真实 `id`。
+
+### 3.9 admin_revoke_closure —— 撤销一条定向闭馆（仅生成草案）
+- 参数：`closureId` integer，必填（来自 `admin_list_closures`）
+- 返回：草案 `{kind:"revoke_closure", payload:{closureId, scopeText, windowText}}`
+- 校验：ID 不存在或窗口已撤销 → 返回错误不出草案；撤销不会恢复此前已自动取消的预约。
+
+> 3.6~3.9 均覆写 `requiredRole()` 为 `ROLE_ADMIN`：普通用户会话里 schema 与提示词手册都不会出现，强行调用返回「无权限执行该操作」。
+
 
 ## 4. 草案（pendingActions）与前端契约
 
@@ -86,15 +117,18 @@ src/main/resources/ai/skills/
 | --- | --- | --- |
 | `create_reservation` | `resourceId, startTime, endTime, headcount, remark, resourceName` | `POST /api/reservations` |
 | `cancel_reservation` | `reservationId` | `POST /api/reservations/{id}/cancel` |
+| `campus_closure` | `closed, reason` | `POST /api/system/campus-close` / `campus-open` |
+| `create_closure` | `resourceType, resourceId, resourceName, closureDate, startTime, endTime, reason, scopeText` | `POST /api/system/closures` |
+| `revoke_closure` | `closureId, scopeText, windowText` | `DELETE /api/system/closures/{id}` |
 
-前端组件：`frontend/src/components/AiChatWidget.vue`。
+前端组件：`frontend/src/components/AiChatWidget.vue`（按 `kind` 渲染标题与字段，闭馆类卡片标红提示影响面）。
 
 ## 5. 预约业务规则（提示词内已告知模型）
 
 - 同一时段每人只能一个预约；
 - 实验室/体育馆最多提前 7 天，图书馆最多提前 1 天（即"明天"），教室不需预约；
 - 开放时间内才可约：图书馆 22:00、体育馆 21:00、实验室 20:00；
-- 预约后 30 分钟内验证码打卡，否则爽约；1 天内违规 3 次当日禁约；
+- 需在预约开始前 30 分钟 ~ 开始后 5 分钟内，到资源所在建筑打卡范围内完成定位打卡，否则爽约；1 天内违规 3 次当日禁约；
 - 总体闭馆或命中类型闭馆时段时，普通用户不可预约（管理员不受限）。
 
 ## 6. 如何新增一个技能

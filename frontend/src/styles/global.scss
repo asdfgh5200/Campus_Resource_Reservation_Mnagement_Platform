@@ -6,33 +6,81 @@
 
 /* 校园管理配色：全局蓝色主题（覆盖 Element Plus 主色） */
 :root {
-  --el-color-primary: #1E62D0;
-  --el-color-primary-light-3: #6291DE;
-  --el-color-primary-light-5: #8FB0E8;
-  --el-color-primary-light-7: #BBD0F1;
-  --el-color-primary-light-8: #D2E0F6;
-  --el-color-primary-light-9: #E8EFFA;
-  --el-color-primary-dark-2: #184EA6;
+  --el-color-primary: #1e62d0;
+  --el-color-primary-light-3: #6291de;
+  --el-color-primary-light-5: #8fb0e8;
+  --el-color-primary-light-7: #bbd0f1;
+  --el-color-primary-light-8: #d2e0f6;
+  --el-color-primary-light-9: #e8effa;
+  --el-color-primary-dark-2: #184ea6;
 
-  --campus-blue-deep: #144E9C;
-  --campus-blue: #2E76DB;
-  --campus-blue-light: #4E9BF0;
-  --campus-blue-lighter: #74B9F5;
-  --campus-navy: #123A6B;
+  --campus-blue-deep: #144e9c;
+  --campus-blue: #2e76db;
+  --campus-blue-light: #4e9bf0;
+  --campus-blue-lighter: #74b9f5;
+  --campus-navy: #123a6b;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   height: 100%;
-  font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei', Arial, sans-serif;
+  font-family:
+    'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial,
+    sans-serif;
   background: #f0f2f5;
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/* 管理端表格以数据完整性优先：窄屏保持可横向查看，而不是压缩字段。 */
+@media (max-width: 768px) {
+  .el-table {
+    min-width: 720px;
+  }
+  .el-table__body-wrapper,
+  .el-scrollbar__wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+  .toolbar,
+  .filters {
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+  .toolbar-left,
+  .toolbar-right,
+  .filters {
+    width: 100%;
+  }
+  .toolbar .el-input,
+  .toolbar .el-select,
+  .filters .el-input,
+  .filters .el-select {
+    width: 100% !important;
+  }
+  .el-dialog {
+    width: calc(100vw - 28px) !important;
+    margin: 7vh auto !important;
+  }
+  .el-pagination {
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+
 // 通用过渡
-.fade-enter-active, .fade-leave-active {
+.fade-enter-active,
+.fade-leave-active {
   transition: opacity 0.3s ease;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 

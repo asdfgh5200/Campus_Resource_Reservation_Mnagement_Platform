@@ -31,6 +31,9 @@ public class UserMessage {
     /** 回复指向的原留言 ID */
     private Long refId;
 
+    /** 关联资源 ID：维修进度等通知可据此跳转到对应地点 */
+    private Long resourceId;
+
     private Integer isRead;
 
     @TableField(fill = FieldFill.INSERT)

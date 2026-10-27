@@ -4,13 +4,13 @@
 //   · 研讨卡座（田字格）—— 2×2 座位环绕共享桌面，上下两排面对面
 // 座位号 01-60 与后端资源 roomNo（如 "6F-01"）一一对应。
 
-const CELL = 58          // 座位格边长（正方形，便于 90° 旋转）
-const GROUP_AISLE = 46   // 组间 / 区间过道宽度
-const ROW_PITCH = 98     // 区块内相邻两排的纵向间距
-const BLOCK_PAD = 30     // 区块内边距
+const CELL = 58 // 座位格边长（正方形，便于 90° 旋转）
+const GROUP_AISLE = 46 // 组间 / 区间过道宽度
+const ROW_PITCH = 98 // 区块内相邻两排的纵向间距
+const BLOCK_PAD = 30 // 区块内边距
 const BLOCK_TITLE_H = 36 // 区块标题高度
-const BLOCK_GAP = 44     // 区块之间的纵向间距
-const PAGE_PAD = 40      // 画布四周留白
+const BLOCK_GAP = 44 // 区块之间的纵向间距
+const PAGE_PAD = 40 // 画布四周留白
 
 /** 横向一排座位的宽度 */
 function rowWidth(count, groupSize) {

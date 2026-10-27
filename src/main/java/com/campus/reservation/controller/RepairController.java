@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/repairs")
 @RequiredArgsConstructor
@@ -28,6 +30,12 @@ public class RepairController {
     @PostMapping
     public Result<RepairOrder> create(@RequestBody RepairDTO dto) {
         return Result.ok(repairService.create(dto));
+    }
+
+    /** 我的维修工单（用户端：消息中心 - 维修工单） */
+    @GetMapping("/mine")
+    public Result<List<RepairOrder>> mine() {
+        return Result.ok(repairService.myOrders());
     }
 
     /** 维修工单列表（管理员） */

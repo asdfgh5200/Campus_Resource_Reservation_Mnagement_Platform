@@ -1,5 +1,6 @@
 package com.campus.reservation.controller;
 
+import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.Result;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ClosureDTO;
@@ -31,6 +32,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SystemConfigController {
 
+    /** 闭馆原因上限：与维修驳回原因同量级，避免广播文案被刷屏 */
+    private static final int REASON_MAX = 100;
+
     private final SystemConfigService systemConfigService;
     private final ClosureService closureService;
     private final MessageService messageService;
@@ -42,21 +46,33 @@ public class SystemConfigController {
         return Result.ok(body);
     }
 
+    /** 一键闭馆：reason 可选（来自管理页或智约机器人草案），会写进群发文案让用户知道原因 */
     @PostMapping("/campus-close")
-    public Result<Map<String, Object>> close() {
+    public Result<Map<String, Object>> close(@RequestBody(required = false) Map<String, String> payload) {
         UserContext.requireAdmin();
+        String reason = payload == null ? null : payload.get("reason");
+        reason = reason == null || reason.isBlank() ? null : reason.trim();
+        if (reason != null && reason.length() > REASON_MAX) {
+            throw BizException.badRequest("闭馆原因不能超过 " + REASON_MAX + " 字");
+        }
         systemConfigService.setClosed(true);
-        // 向全体用户群发闭馆通知
-        messageService.broadcast("【闭馆通知】校园预约系统已由管理员执行闭馆，普通用户暂停预约与使用，重新开放时间请关注系统横幅或再次收到本通知。", MessageService.SCOPE_ALL);
+        // 向全体用户群发闭馆通知，带上原因让人知道为什么闭馆
+        messageService.broadcast(String.format(
+                "【闭馆通知】校园预约服务现已暂停%s，暂停期间不可新建预约或使用资源，恢复开放时间将通过平台横幅与站内消息另行通知。",
+                reason == null ? "" : "（原因：" + reason + "）"), MessageService.SCOPE_ALL);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("closed", true);
+        body.put("reason", reason);
         return Result.ok(body);
     }
 
+    /** 恢复开放：同样群发一条恢复通知，用户不用再自己试探能不能约 */
     @PostMapping("/campus-open")
     public Result<Map<String, Object>> open() {
         UserContext.requireAdmin();
         systemConfigService.setClosed(false);
+        messageService.broadcast("【恢复开放通知】校园预约服务已恢复开放，可正常新建预约与使用资源，感谢您的理解与配合。",
+                MessageService.SCOPE_ALL);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("closed", false);
         return Result.ok(body);

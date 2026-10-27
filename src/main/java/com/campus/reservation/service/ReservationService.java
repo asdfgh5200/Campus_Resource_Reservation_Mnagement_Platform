@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ReservationDTO;
+import com.campus.reservation.dto.ReservationTraceVO;
 import com.campus.reservation.entity.Holiday;
 import com.campus.reservation.entity.Reservation;
 import com.campus.reservation.entity.ReservationLog;
@@ -21,9 +22,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -40,25 +42,20 @@ public class ReservationService {
     public static final int CHECKIN_ADVANCE_MINUTES = 30;
     /** 开始后仍可打卡的分钟数，超过则自动爽约并释放空间 */
     public static final int CHECKIN_LATE_MINUTES = 5;
-    /** 30 天内取消次数达到该值记恶意取消 */
-    public static final int CANCEL_LIMIT = 3;
+    /** 单次预约最短时长（分钟）：过短的碎片时段既无实际使用价值，也让资源难以周转 */
+    public static final int MIN_DURATION_MINUTES = 30;
+    /** 累计取消预约次数上限：达到该值记恶意取消，次数存 sys_user.cancel_count，管理端可修正 */
+    public static final int CANCEL_LIMIT = 5;
     /** 实验室(2)/体育馆(4)：仅可预约未来一周内的时间（含第 7 天） */
     public static final int LAB_GYM_ADVANCE_DAYS = 7;
     /** 图书馆(3)：最多只能预约到次日 */
     public static final int LIBRARY_ADVANCE_DAYS = 1;
-    /** 普通暂离时长（分钟） */
-    public static final int AWAY_MINUTES = 30;
-    /** 饭点暂离时长（分钟） */
-    public static final int AWAY_MEAL_MINUTES = 60;
-    /** 午餐暂离时段 */
-    private static final LocalTime MEAL_LUNCH_START = LocalTime.of(11, 0);
-    private static final LocalTime MEAL_LUNCH_END = LocalTime.of(12, 30);
-    /** 晚餐暂离时段 */
-    private static final LocalTime MEAL_DINNER_START = LocalTime.of(17, 30);
-    private static final LocalTime MEAL_DINNER_END = LocalTime.of(19, 0);
 
     /** 操作日志中时间的展示格式 */
     private static final DateTimeFormatter LOG_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    /** 预约状态文案（下标即状态值），用于管理端操作留痕 */
+    private static final String[] STATUS_LABELS = {"未知", "待打卡", "使用中", "已结束", "已取消", "爽约", "违规"};
 
     private final ReservationMapper reservationMapper;
     private final ResourceMapper resourceMapper;
@@ -66,7 +63,6 @@ public class ReservationService {
     private final HolidayMapper holidayMapper;
     private final ViolationMapper violationMapper;
     private final ReservationLogService logService;
-    private final CheckinCodeService checkinCodeService;
     private final SystemConfigService systemConfigService;
     private final ClosureService closureService;
 
@@ -77,14 +73,14 @@ public class ReservationService {
     }
 
     /**
-     * 创建预约：规则校验（当日违规次数/资源状态/节假日/开放时间）+ 时间冲突检测（预约时长不设上限）。
+     * 创建预约：规则校验（当日违规次数/资源状态/节假日/开放时间/最短 30 分钟，时长不设上限）+ 时间冲突检测。
      * 冲突判定采用半开区间 [start, end)：newStart < existEnd AND newEnd > existStart。
      */
     @Transactional
     public Reservation create(ReservationDTO dto) {
         Long userId = UserContext.requireUserId();
         if (dto.getResourceId() == null || dto.getStartTime() == null || dto.getEndTime() == null) {
-            throw BizException.badRequest("缺少必要参数（resourceId/startTime/endTime）");
+            throw BizException.badRequest("缺少必要参数");
         }
         // 并发安全：事务内第一条查询即锁住资源行，同一资源的并发请求在此串行化。
         // 必须前置：若晚于普通 SELECT，RR 隔离级别下读快照已建立，拿锁后仍会漏读对手刚提交的预约
@@ -95,27 +91,37 @@ public class ReservationService {
         }
         // 一键闭馆：闭馆期间禁止普通用户预约，管理员不受限
         if (!isAdmin() && systemConfigService.isClosed()) {
-            throw BizException.forbidden("当前校园已闭馆，暂停预约，请等待管理员开放");
+            throw BizException.forbidden("校园当前处于闭馆状态，暂停开放预约，恢复时间以平台通知为准");
         }
-        // 当日违规达 3 次 → 今日禁止预约；统计口径为自然日，次日 0 点后自动恢复；管理员不受限
+        // 预约权限：管理员可强制受限/强制正常，未设置时按当日违规次数自动判定
         if (!isAdmin()) {
-            Long todayViolations = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
-                    .eq(Violation::getUserId, userId)
-                    .eq(Violation::getStatus, 1)
-                    .ge(Violation::getCreatedAt, LocalDate.now().atStartOfDay()));
-            if (todayViolations != null && todayViolations >= DAILY_VIOLATION_LIMIT) {
-                throw BizException.forbidden(String.format(
-                        "今日已有 %d 次违规记录，今日禁止预约，次日自动恢复", todayViolations));
+            Integer override = user.getRestrictOverride();
+            if (override != null && override == 2) {
+                throw BizException.forbidden(
+                        "您的账号预约权限当前处于受限状态，暂无法新建预约。如需恢复，请通过「意见反馈」提交申诉，工作人员将尽快核实处理");
+            }
+            if (override == null || override == 0) {
+                Long todayViolations = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
+                        .eq(Violation::getUserId, userId)
+                        .eq(Violation::getStatus, 1)
+                        .ge(Violation::getCreatedAt, LocalDate.now().atStartOfDay()));
+                if (todayViolations != null && todayViolations >= DAILY_VIOLATION_LIMIT) {
+                    throw BizException.forbidden(String.format(
+                            "您今日已有 %d 次违规记录，按平台规则今日暂停预约，次日自动恢复", todayViolations));
+                }
             }
         }
         Resource resource = resourceMapper.selectById(dto.getResourceId());
         if (resource == null) {
             throw BizException.notFound("资源不存在");
         }
-        if (resource.getStatus() == 3) {
+        if (resource.getStatus() != null && resource.getStatus() == Resource.STATUS_REPAIRING) {
             throw BizException.conflict("该资源正在维修中，暂不可预约");
         }
-        if (resource.getStatus() == 2) {
+        if (resource.getStatus() != null && resource.getStatus() == Resource.STATUS_REPORTED) {
+            throw BizException.conflict("该资源已报修，等待处理，暂不可预约");
+        }
+        if (resource.getStatus() != null && resource.getStatus() == Resource.STATUS_IN_USE) {
             throw BizException.conflict("该资源正在被使用");
         }
         if (resource.getResourceType() != null && resource.getResourceType() == 1) {
@@ -124,12 +130,15 @@ public class ReservationService {
 
         LocalDateTime start = dto.getStartTime();
         LocalDateTime end = dto.getEndTime();
-        // 细粒度类型闭馆：命中实验室/图书馆/体育馆的闭馆时段则禁止预约（管理员不受限，与总体闭馆一致）
-        if (!isAdmin() && closureService.isClosedAt(resource.getResourceType(), start, end)) {
-            throw BizException.conflict("该类型资源在此时段已闭馆，暂不可预约");
+        // 定向闭馆：命中整类或该具体资源的闭馆时段则禁止预约（管理员不受限，与总体闭馆一致）
+        if (!isAdmin() && closureService.isClosedAt(resource.getId(), resource.getResourceType(), start, end)) {
+            throw BizException.conflict("该资源在此时段已闭馆，暂不可预约");
         }
         if (!start.isBefore(end)) {
             throw BizException.badRequest("结束时间必须晚于开始时间");
+        }
+        if (Duration.between(start, end).toMinutes() < MIN_DURATION_MINUTES) {
+            throw BizException.badRequest("单次预约时长不能少于 " + MIN_DURATION_MINUTES + " 分钟");
         }
         if (start.isBefore(LocalDateTime.now().minusMinutes(1))) {
             throw BizException.badRequest("预约开始时间不能早于当前时间");
@@ -167,7 +176,7 @@ public class ReservationService {
         if (!mine.isEmpty()) {
             Reservation other = mine.get(0);
             Resource otherRes = resourceMapper.selectById(other.getResourceId());
-            throw BizException.conflict(String.format("该时间段你已有预约：%s %s ~ %s，同一时间只能预约一个资源",
+            throw BizException.conflict(String.format("您在该时段已有预约：%s %s ~ %s，同一时段仅可预约一个资源",
                     otherRes == null ? "其他资源" : otherRes.getName(),
                     other.getStartTime().format(LOG_TIME_FMT), other.getEndTime().format(LOG_TIME_FMT)));
         }
@@ -225,6 +234,11 @@ public class ReservationService {
         reservation.setRemark(dto.getRemark());
         reservationMapper.insert(reservation);
         reservation.setResource(resource);
+        // 累计预约次数 +1（管理端可修正，与预约记录列表解耦）
+        SysUser counter = new SysUser();
+        counter.setId(userId);
+        counter.setReservationTotal((user.getReservationTotal() == null ? 0 : user.getReservationTotal()) + 1);
+        userMapper.updateById(counter);
         writeLog(userId, reservation.getId(), dto.getResourceId(), ReservationLog.ACTION_CREATE,
                 String.format("创建预约：%s %s ~ %s", resource.getName(), start.format(LOG_TIME_FMT), end.format(LOG_TIME_FMT)));
         return reservation;
@@ -233,8 +247,7 @@ public class ReservationService {
     /**
      * 懒惰状态流转：
      * 1) 超过打卡时限（开始后 5 分钟）仍未打卡 → 爽约（记违规扣信用分）并释放空间；
-     * 2) 暂离超时未返回 → 自动释放空间（记违规扣信用分）；
-     * 3) 到期未结束 → 已完成。
+     * 2) 到期未结束 → 已完成。
      */
     public void refreshStatuses() {
         LocalDateTime now = LocalDateTime.now();
@@ -246,23 +259,9 @@ public class ReservationService {
             r.setStatus(Reservation.STATUS_NOSHOW);
             reservationMapper.updateById(r);
             recordViolation(r.getUserId(), r.getId(), Violation.TYPE_NOSHOW,
-                    "超过打卡时限未完成打卡，记一次爽约");
-            writeLog(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_NOSHOW,
+                    "预约开始后未在规定时间内完成打卡，系统已记录");
+            writeLogSystem(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_NOSHOW,
                     String.format("超过打卡时限（开始后 %d 分钟内未打卡），系统自动释放空间并记为爽约", CHECKIN_LATE_MINUTES));
-        }
-
-        List<Reservation> awayTimeouts = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
-                .eq(Reservation::getStatus, Reservation.STATUS_IN_USE)
-                .isNotNull(Reservation::getAwayUntil)
-                .lt(Reservation::getAwayUntil, now));
-        for (Reservation r : awayTimeouts) {
-            r.setStatus(Reservation.STATUS_COMPLETED);
-            r.setAwayUntil(null);
-            reservationMapper.updateById(r);
-            recordViolation(r.getUserId(), r.getId(), Violation.TYPE_OVERTIME,
-                    "暂离超时未返回，记一次违规");
-            writeLog(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_AWAY_TIMEOUT,
-                    "暂离超时未返回，系统自动释放空间并记违规一次");
         }
 
         List<Reservation> finished = reservationMapper.selectList(Wrappers.<Reservation>lambdaQuery()
@@ -270,17 +269,10 @@ public class ReservationService {
                 .lt(Reservation::getEndTime, now));
         for (Reservation r : finished) {
             r.setStatus(Reservation.STATUS_COMPLETED);
-            r.setAwayUntil(null);
             reservationMapper.updateById(r);
-            writeLog(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_COMPLETE,
+            writeLogSystem(r.getUserId(), r.getId(), r.getResourceId(), ReservationLog.ACTION_COMPLETE,
                     "预约到期，系统自动标记为已完成");
         }
-    }
-
-    /** 是否处于饭点暂离时段（午餐 11:00-12:30、晚餐 17:30-19:00） */
-    public static boolean isMealTime(LocalTime time) {
-        return (!time.isBefore(MEAL_LUNCH_START) && !time.isAfter(MEAL_LUNCH_END))
-                || (!time.isBefore(MEAL_DINNER_START) && !time.isAfter(MEAL_DINNER_END));
     }
 
     /** 提前释放：使用中的预约主动结束，立即释放空间 */
@@ -291,7 +283,6 @@ public class ReservationService {
             throw BizException.badRequest("仅使用中的预约可提前释放");
         }
         reservation.setStatus(Reservation.STATUS_COMPLETED);
-        reservation.setAwayUntil(null);
         reservationMapper.updateById(reservation);
         fillResources(List.of(reservation));
         writeLog(reservation.getUserId(), reservation.getId(), reservation.getResourceId(),
@@ -299,51 +290,21 @@ public class ReservationService {
         return reservation;
     }
 
-    /** 暂离：保留空间，minutes 分钟内返回；饭点可暂离 1 小时 */
-    @Transactional
-    public Reservation away(Long id, Integer minutes) {
-        Reservation reservation = getOwned(id);
-        if (reservation.getStatus() != Reservation.STATUS_IN_USE) {
-            throw BizException.badRequest("仅使用中的预约可暂离");
-        }
-        int m = minutes == null ? AWAY_MINUTES : minutes;
-        if (m != AWAY_MINUTES && m != AWAY_MEAL_MINUTES) {
-            throw BizException.badRequest("暂离时长仅支持 30 分钟或 60 分钟");
-        }
-        if (m == AWAY_MEAL_MINUTES && !isMealTime(LocalTime.now())) {
-            throw BizException.badRequest("仅午餐（11:00-12:30）或晚餐（17:30-19:00）时段可暂离 1 小时");
-        }
-        reservation.setAwayUntil(LocalDateTime.now().plusMinutes(m));
-        reservationMapper.updateById(reservation);
-        fillResources(List.of(reservation));
-        writeLog(reservation.getUserId(), reservation.getId(), reservation.getResourceId(),
-                ReservationLog.ACTION_AWAY,
-                String.format("暂离 %d 分钟，暂离期间空间保留（超时未返回将自动释放并记违规）", m));
-        return reservation;
-    }
-
-    /** 结束暂离，恢复使用 */
-    @Transactional
-    public Reservation cancelAway(Long id) {
-        Reservation reservation = getOwned(id);
-        if (reservation.getStatus() != Reservation.STATUS_IN_USE || reservation.getAwayUntil() == null) {
-            throw BizException.badRequest("当前未处于暂离状态");
-        }
-        reservation.setAwayUntil(null);
-        reservationMapper.updateById(reservation);
-        fillResources(List.of(reservation));
-        writeLog(reservation.getUserId(), reservation.getId(), reservation.getResourceId(),
-                ReservationLog.ACTION_AWAY, "结束暂离，返回使用");
-        return reservation;
-    }
-
-    public Page<Reservation> my(Integer current, Integer size, Integer status) {
+    /**
+     * 我的预约：可按状态、按预约开始日期（单日）筛选。
+     * date 只比对 start_time 所在的自然日，即"这天的预约"，不跨天拆分。
+     */
+    public Page<Reservation> my(Integer current, Integer size, Integer status, LocalDate date) {
         refreshStatuses();
+        LocalDateTime dayStart = date == null ? null : date.atStartOfDay();
+        LocalDateTime dayEnd = date == null ? null : date.plusDays(1).atStartOfDay();
         Page<Reservation> page = reservationMapper.selectPage(
                 new Page<>(current == null || current < 1 ? 1 : current, size == null || size < 1 ? 10 : size),
                 Wrappers.<Reservation>lambdaQuery()
                         .eq(Reservation::getUserId, UserContext.requireUserId())
                         .eq(status != null, Reservation::getStatus, status)
+                        .ge(dayStart != null, Reservation::getStartTime, dayStart)
+                        .lt(dayEnd != null, Reservation::getStartTime, dayEnd)
                         .orderByDesc(Reservation::getCreatedAt));
         fillResources(page.getRecords());
         return page;
@@ -368,11 +329,37 @@ public class ReservationService {
         return reservation;
     }
 
+    /**
+     * 单条预约的「当时情况」：预约本体 + 操作时间线 + 关联违规。
+     * 用户端预约详情、违规记录详情侧拉框使用；归属校验与详情一致（本人或管理员），
+     * 违规只返回对该预约产生的记录，含已撤销的（让用户看得到“先记后被撤销”的完整过程）。
+     */
+    public ReservationTraceVO trace(Long id) {
+        refreshStatuses();
+        Reservation reservation = getOwned(id);
+        fillResources(List.of(reservation));
+        List<ReservationLog> logs = logService.listByReservation(id);
+        List<Violation> violations = violationMapper.selectList(Wrappers.<Violation>lambdaQuery()
+                .eq(Violation::getReservationId, id)
+                .orderByAsc(Violation::getCreatedAt)
+                .orderByAsc(Violation::getId));
+        return new ReservationTraceVO(reservation, logs, violations);
+    }
+
     @Transactional
     public Reservation cancel(Long id) {
         Reservation reservation = getOwned(id);
         if (reservation.getStatus() != Reservation.STATUS_PENDING) {
-            throw BizException.badRequest("当前状态不可取消");
+            throw BizException.badRequest("当前状态下不可取消预约");
+        }
+        SysUser user = userMapper.selectById(reservation.getUserId());
+        int before = user == null || user.getCancelCount() == null ? 0 : user.getCancelCount();
+        // 累计取消已达上限（已记恶意取消）：用户不可再自行取消，只能等管理员重置次数后恢复。
+        // 管理员代为处理不受限，否则用户的待打卡预约将无处可退。
+        if (!isAdmin() && before >= CANCEL_LIMIT) {
+            throw BizException.forbidden(String.format(
+                    "您的预约取消次数已达上限（%d 次），暂不可继续取消预约。如需帮助，请通过「意见反馈」提交申诉",
+                    CANCEL_LIMIT));
         }
         reservation.setStatus(Reservation.STATUS_CANCELLED);
         reservationMapper.updateById(reservation);
@@ -381,14 +368,24 @@ public class ReservationService {
                 String.format("取消预约：%s ~ %s",
                         reservation.getStartTime().format(LOG_TIME_FMT), reservation.getEndTime().format(LOG_TIME_FMT)));
 
-        // 30 天内取消次数过多 → 记恶意取消并扣信用分
-        Long cancelCnt = reservationMapper.selectCount(Wrappers.<Reservation>lambdaQuery()
-                .eq(Reservation::getUserId, reservation.getUserId())
-                .eq(Reservation::getStatus, Reservation.STATUS_CANCELLED)
-                .ge(Reservation::getCreatedAt, LocalDateTime.now().minusDays(30)));
-        if (cancelCnt >= CANCEL_LIMIT) {
-            recordViolation(reservation.getUserId(), id, Violation.TYPE_BAD_CANCEL,
-                    "30 天内取消预约达 " + cancelCnt + " 次，记恶意取消");
+        // 累计取消次数 +1 并封顶在 CANCEL_LIMIT：上限即上限，不允许再出现 6/5 这类越界计数
+        int cancelCount = Math.min(before + 1, CANCEL_LIMIT);
+        if (user != null) {
+            SysUser patch = new SysUser();
+            patch.setId(user.getId());
+            patch.setCancelCount(cancelCount);
+            userMapper.updateById(patch);
+        }
+        // 达到上限时记一次恶意取消；同一用户已有有效记录则不重复记（管理员撤销后可再记）
+        if (before + 1 >= CANCEL_LIMIT) {
+            Long exists = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
+                    .eq(Violation::getUserId, reservation.getUserId())
+                    .eq(Violation::getType, Violation.TYPE_BAD_CANCEL)
+                    .eq(Violation::getStatus, 1));
+            if (exists == null || exists == 0) {
+                recordViolation(reservation.getUserId(), id, Violation.TYPE_BAD_CANCEL,
+                        "预约取消次数累计达 " + CANCEL_LIMIT + " 次上限，系统已记录");
+            }
         }
         return reservation;
     }
@@ -415,6 +412,23 @@ public class ReservationService {
 
     @Transactional
     public Reservation checkin(Long id) {
+        return checkin(id, Reservation.CHECKIN_TYPE_CODE, "完成验证码打卡");
+    }
+
+    /** 完成打卡并记录打卡方式（验证码打卡，无定位数据） */
+    @Transactional
+    public Reservation checkin(Long id, int checkinType, String checkinDetail) {
+        return checkin(id, checkinType, checkinDetail, null, null, null, null);
+    }
+
+    /**
+     * 完成打卡并记录打卡方式。
+     * 定位打卡时同时落库用户坐标、距离与定位精度，供管理端在预约详情里追溯。
+     */
+    @Transactional
+    public Reservation checkin(Long id, int checkinType, String checkinDetail,
+                               BigDecimal latitude, BigDecimal longitude,
+                               Integer distance, Integer accuracy) {
         Reservation reservation = getOwned(id);
         if (reservation.getStatus() != Reservation.STATUS_PENDING) {
             throw BizException.badRequest("当前状态不可打卡");
@@ -427,13 +441,61 @@ public class ReservationService {
             throw BizException.badRequest(String.format("已超过打卡时限（需在预约开始后 %d 分钟内完成打卡）", CHECKIN_LATE_MINUTES));
         }
         reservation.setCheckinFlag(1);
+        reservation.setCheckinType(checkinType);
         reservation.setCheckinTime(now);
+        reservation.setCheckinLatitude(latitude);
+        reservation.setCheckinLongitude(longitude);
+        reservation.setCheckinDistance(distance);
+        reservation.setCheckinAccuracy(accuracy);
         reservation.setStatus(Reservation.STATUS_IN_USE);
         reservationMapper.updateById(reservation);
         fillResources(List.of(reservation));
         writeLog(reservation.getUserId(), reservation.getId(), reservation.getResourceId(),
-                ReservationLog.ACTION_CHECKIN, "完成打卡（方式：验证码）");
+                ReservationLog.ACTION_CHECKIN, checkinDetail);
         return reservation;
+    }
+
+    /**
+     * 管理端：直接修改预约状态（与用户端同一套状态值）。
+     * 切到使用中时补打卡标记（不受现场打卡时间窗口限制，视为管理员代为打卡）。
+     */
+    @Transactional
+    public Reservation adminUpdateStatus(Long id, Integer status) {
+        UserContext.requireAdmin();
+        if (status == null || status < Reservation.STATUS_PENDING || status > Reservation.STATUS_VIOLATED) {
+            throw BizException.badRequest("预约状态不合法");
+        }
+        Reservation reservation = reservationMapper.selectById(id);
+        if (reservation == null) {
+            throw BizException.notFound("预约不存在");
+        }
+        int before = reservation.getStatus() == null ? 0 : reservation.getStatus();
+        if (before == status) {
+            throw BizException.badRequest("该预约已经是「" + statusLabel(status) + "」，无需修改");
+        }
+        reservation.setStatus(status);
+        if (status == Reservation.STATUS_IN_USE) {
+            if (reservation.getCheckinFlag() == null || reservation.getCheckinFlag() != 1) {
+                reservation.setCheckinFlag(1);
+                reservation.setCheckinType(Reservation.CHECKIN_TYPE_ADMIN);
+                reservation.setCheckinTime(LocalDateTime.now());
+            }
+        }
+        reservationMapper.updateById(reservation);
+        fillResources(List.of(reservation));
+        String resourceName = reservation.getResource() == null ? "该资源" : reservation.getResource().getName();
+        writeLog(reservation.getUserId(), reservation.getId(), reservation.getResourceId(),
+                ReservationLog.ACTION_ADMIN_UPDATE,
+                String.format("管理员调整预约状态：%s → %s（%s，%s ~ %s）",
+                        statusLabel(before), statusLabel(status), resourceName,
+                        reservation.getStartTime().format(LOG_TIME_FMT),
+                        reservation.getEndTime().format(LOG_TIME_FMT)));
+        return reservation;
+    }
+
+    private static String statusLabel(Integer status) {
+        return status == null || status < 0 || status >= STATUS_LABELS.length
+                ? STATUS_LABELS[0] : STATUS_LABELS[status];
     }
 
     /** 归属校验：本人或管理员 */
@@ -462,12 +524,22 @@ public class ReservationService {
         }
     }
 
-    /** 管理端：全部预约分页（含用户名与资源信息，可按用户名/状态/资源类型筛选） */
-    public Page<Reservation> adminPage(Integer current, Integer size, String username, Integer status, Integer resourceType) {
+    /** 管理端：全部预约分页（仅普通用户的预约，可按用户名/状态/资源类型/校区/资源/日期筛选） */
+    public Page<Reservation> adminPage(Integer current, Integer size, String username, Integer status, Integer resourceType,
+                                       Long resourceId, LocalDate date, String campus,
+                                       LocalDate startDate, LocalDate endDate) {
         refreshStatuses();
         int cur = current == null || current < 1 ? 1 : current;
         int sz = size == null || size < 1 ? 10 : size;
+        // 管理员自己的预约不进「预约管理」：这里只管理普通用户的预约
+        List<Long> normalUserIds = userMapper.selectList(Wrappers.<SysUser>lambdaQuery()
+                        .eq(SysUser::getRole, 0)).stream()
+                .map(SysUser::getId).toList();
+        if (normalUserIds.isEmpty()) {
+            return new Page<>(cur, sz);
+        }
         var qw = Wrappers.<Reservation>lambdaQuery()
+                .in(Reservation::getUserId, normalUserIds)
                 .eq(status != null, Reservation::getStatus, status)
                 .orderByDesc(Reservation::getCreatedAt);
         if (StringUtils.hasText(username)) {
@@ -488,11 +560,50 @@ public class ReservationService {
             }
             qw.in(Reservation::getResourceId, rids);
         }
+        // 按校区过滤：先取该校区全部资源，再限定预约
+        if (StringUtils.hasText(campus)) {
+            List<Long> cids = resourceMapper.selectList(Wrappers.<Resource>lambdaQuery()
+                            .eq(Resource::getCampus, campus)).stream()
+                    .map(Resource::getId).toList();
+            if (cids.isEmpty()) {
+                return new Page<>(cur, sz);
+            }
+            qw.in(Reservation::getResourceId, cids);
+        }
+        // 按具体资源过滤（资源档案抽屉里展示该资源的预约占用）
+        if (resourceId != null) {
+            qw.eq(Reservation::getResourceId, resourceId);
+        }
+        // 按日期过滤：与当天有交集的预约（半开区间）
+        if (date != null) {
+            LocalDateTime dayStart = date.atStartOfDay();
+            LocalDateTime dayEnd = date.plusDays(1).atStartOfDay();
+            qw.lt(Reservation::getStartTime, dayEnd).gt(Reservation::getEndTime, dayStart);
+        }
+        // 按日期区间过滤：与 [startDate, endDate] 任意一天有交集即命中
+        if (startDate != null || endDate != null) {
+            LocalDate from = startDate != null ? startDate : endDate;
+            LocalDate to = endDate != null ? endDate : startDate;
+            qw.lt(Reservation::getStartTime, to.plusDays(1).atStartOfDay())
+                    .gt(Reservation::getEndTime, from.atStartOfDay());
+        }
         Page<Reservation> page = reservationMapper.selectPage(new Page<>(cur, sz), qw);
         fillResources(page.getRecords());
         fillUsers(page.getRecords());
-        fillCheckinCodes(page.getRecords());
         return page;
+    }
+
+    /** 管理端：单条预约详情（含用户、资源与打卡追溯信息），不受归属关系限制 */
+    public Reservation adminDetail(Long id) {
+        UserContext.requireAdmin();
+        refreshStatuses();
+        Reservation reservation = reservationMapper.selectById(id);
+        if (reservation == null) {
+            throw BizException.notFound("预约不存在");
+        }
+        fillResources(List.of(reservation));
+        fillUsers(List.of(reservation));
+        return reservation;
     }
 
     /** 回填关联用户（管理端展示用户名） */
@@ -508,31 +619,22 @@ public class ReservationService {
         }
     }
 
-    /**
-     * 回填待打卡预约对应资源的当日验证码（管理端展示，便于复制告知用户）。
-     * 仅对待打卡预约生效，且会按需生成当日验证码。
-     */
-    private void fillCheckinCodes(List<Reservation> records) {
-        if (records == null || records.isEmpty()) {
-            return;
-        }
-        for (Reservation r : records) {
-            if (r.getStatus() != null && r.getStatus() == Reservation.STATUS_PENDING && r.getResourceId() != null) {
-                r.setCheckinCode(checkinCodeService.ensureTodayCode(r.getResourceId()).getCode());
-            }
-        }
-    }
-
     /** 写一条预约操作日志（自动补全资源名） */
     private void writeLog(Long userId, Long reservationId, Long resourceId, int action, String detail) {
-        String resourceName = null;
-        if (resourceId != null) {
-            Resource res = resourceMapper.selectById(resourceId);
-            if (res != null) {
-                resourceName = res.getName();
-            }
+        logService.record(userId, reservationId, resourceId, resourceNameOf(resourceId), action, detail);
+    }
+
+    /** 写一条系统自动产生的日志（定时爽约/到期完成），操作人记为「系统自动」 */
+    private void writeLogSystem(Long userId, Long reservationId, Long resourceId, int action, String detail) {
+        logService.recordSystem(userId, reservationId, resourceId, resourceNameOf(resourceId), action, detail);
+    }
+
+    private String resourceNameOf(Long resourceId) {
+        if (resourceId == null) {
+            return null;
         }
-        logService.record(userId, reservationId, resourceId, resourceName, action, detail);
+        Resource res = resourceMapper.selectById(resourceId);
+        return res == null ? null : res.getName();
     }
 
     /** 记录一次违规：仅落库供管理端查阅，不再使用信用分计法 */

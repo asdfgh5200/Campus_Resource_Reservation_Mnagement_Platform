@@ -14,16 +14,13 @@
     </div>
 
     <!-- 聊天窗：整体可拖，位置自动贴合视口，不会溢出屏幕 -->
-    <el-card
-      v-if="open"
-      ref="panelRef"
-      class="ai-panel"
-      shadow="always"
-      :style="panelStyle"
-    >
+    <el-card v-if="open" ref="panelRef" class="ai-panel" shadow="always" :style="panelStyle">
       <template #header>
         <div class="hd" @pointerdown="onPanelHeaderDown">
-          <span class="ttl"><el-icon><MagicStick /></el-icon> 智约机器人 <small class="drag-tip">（按住标题栏拖动）</small></span>
+          <span class="ttl"
+            ><el-icon><MagicStick /></el-icon> 智约机器人
+            <small class="drag-tip">（按住标题栏拖动）</small></span
+          >
           <div class="hd-btns" @pointerdown.stop>
             <el-button link size="small" @click="clearChat">清空</el-button>
             <el-button link size="small" @click="closePanel">收起</el-button>
@@ -35,20 +32,24 @@
         <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
           <div class="bubble" v-if="m.content">{{ m.content }}</div>
           <div v-if="m.actions && m.actions.length" class="actions">
-            <div v-for="(a, ai) in m.actions" :key="ai" class="act-card">
-              <div class="act-title">
-                {{ a.kind === 'create_reservation' ? '📝 预约草案' : '🚫 取消草案' }}
-              </div>
-              <div class="act-body" v-if="a.kind === 'create_reservation'">
-                <div>资源：{{ a.payload.resourceName || a.payload.resourceId }}</div>
-                <div>时段：{{ shortTime(a.payload.startTime) }} — {{ shortTime(a.payload.endTime) }}</div>
-                <div v-if="a.payload.headcount && a.payload.headcount > 1">人数：{{ a.payload.headcount }}</div>
-              </div>
-              <div class="act-body" v-else>
-                <div>预约 ID：{{ a.payload.reservationId }}</div>
+            <div
+              v-for="(a, ai) in m.actions"
+              :key="ai"
+              class="act-card"
+              :class="{ 'act-danger': a.kind === 'campus_closure' || a.kind === 'revoke_closure' }"
+            >
+              <div class="act-title">{{ actTitle(a) }}</div>
+              <div class="act-body">
+                <div v-for="(line, li) in actLines(a)" :key="li">{{ line }}</div>
               </div>
               <div class="act-btns">
-                <el-button size="small" type="primary" :loading="a.busy" @click="confirmAction(a, m)">确认</el-button>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="a.busy"
+                  @click="confirmAction(a, m)"
+                  >确认</el-button
+                >
                 <el-button size="small" @click="dismissAction(a)">取消</el-button>
               </div>
               <div v-if="a.done" class="act-done">✓ {{ a.doneText || '已完成' }}</div>
@@ -83,7 +84,7 @@ import api from '@/api'
 const FAB_SIZE = 52
 const PANEL_W = 400
 const PANEL_H = 560
-const EDGE = 12          // 距离视口边缘的安全留白
+const EDGE = 12 // 距离视口边缘的安全留白
 const LS_FAB = 'ai-fab-pos'
 const LS_PANEL = 'ai-panel-pos'
 
@@ -157,28 +158,43 @@ function loadPositions() {
   try {
     const f = JSON.parse(localStorage.getItem(LS_FAB) || 'null')
     if (f && typeof f.x === 'number' && typeof f.y === 'number') {
-      fabPos.x = f.x; fabPos.y = f.y
+      fabPos.x = f.x
+      fabPos.y = f.y
     } else {
-      const d = defaultFabPos(); fabPos.x = d.x; fabPos.y = d.y
+      const d = defaultFabPos()
+      fabPos.x = d.x
+      fabPos.y = d.y
     }
     const p = JSON.parse(localStorage.getItem(LS_PANEL) || 'null')
     if (p && typeof p.x === 'number' && typeof p.y === 'number') {
-      panelPos.x = p.x; panelPos.y = p.y
+      panelPos.x = p.x
+      panelPos.y = p.y
     } else {
-      const d = defaultPanelPos(); panelPos.x = d.x; panelPos.y = d.y
+      const d = defaultPanelPos()
+      panelPos.x = d.x
+      panelPos.y = d.y
     }
-    clampFab(); clampPanel()
+    clampFab()
+    clampPanel()
   } catch (e) {
-    const d = defaultFabPos(); fabPos.x = d.x; fabPos.y = d.y
-    const dp = defaultPanelPos(); panelPos.x = dp.x; panelPos.y = dp.y
+    const d = defaultFabPos()
+    fabPos.x = d.x
+    fabPos.y = d.y
+    const dp = defaultPanelPos()
+    panelPos.x = dp.x
+    panelPos.y = dp.y
   }
 }
 
 function saveFab() {
-  try { localStorage.setItem(LS_FAB, JSON.stringify({ x: fabPos.x, y: fabPos.y })) } catch (e) {}
+  try {
+    localStorage.setItem(LS_FAB, JSON.stringify({ x: fabPos.x, y: fabPos.y }))
+  } catch (e) {}
 }
 function savePanel() {
-  try { localStorage.setItem(LS_PANEL, JSON.stringify({ x: panelPos.x, y: panelPos.y })) } catch (e) {}
+  try {
+    localStorage.setItem(LS_PANEL, JSON.stringify({ x: panelPos.x, y: panelPos.y }))
+  } catch (e) {}
 }
 
 // ---------------- 悬浮球拖拽 ----------------
@@ -200,7 +216,8 @@ function onFabMove(e) {
   const nx = e.clientX - fabDrag.dx
   const ny = e.clientY - fabDrag.dy
   if (Math.abs(nx - fabPos.x) > 3 || Math.abs(ny - fabPos.y) > 3) fabDrag.moved = true
-  fabPos.x = nx; fabPos.y = ny
+  fabPos.x = nx
+  fabPos.y = ny
   clampFab()
 }
 
@@ -218,7 +235,8 @@ function onFabUp() {
 
 function openPanel() {
   const d = defaultPanelPos()
-  panelPos.x = d.x; panelPos.y = d.y
+  panelPos.x = d.x
+  panelPos.y = d.y
   clampPanel()
   open.value = true
   savePanel()
@@ -261,7 +279,8 @@ function onResize() {
   viewport.h = window.innerHeight
   clampFab()
   clampPanel()
-  saveFab(); savePanel()
+  saveFab()
+  savePanel()
 }
 
 // ---------------- 会话逻辑（保持不变） ----------------
@@ -269,6 +288,55 @@ function onResize() {
 function shortTime(t) {
   if (!t) return ''
   return String(t).replace('T', ' ').slice(5, 16)
+}
+
+// 草案卡按 kind 渲染：普通预约类 + 管理员闭馆类共用一套卡片布局
+const ACT_TITLE = {
+  create_reservation: '📝 预约草案',
+  cancel_reservation: '🚫 取消草案',
+  campus_closure: '🏫 一键闭馆确认',
+  create_closure: '📅 定向闭馆草案',
+  revoke_closure: '♻️ 撤销闭馆确认'
+}
+
+function actTitle(a) {
+  return ACT_TITLE[a.kind] || '操作草案'
+}
+
+function actLines(a) {
+  const p = a.payload || {}
+  if (a.kind === 'create_reservation') {
+    const lines = [
+      `资源：${p.resourceName || p.resourceId}`,
+      `时段：${shortTime(p.startTime)} — ${shortTime(p.endTime)}`
+    ]
+    if (p.headcount && p.headcount > 1) lines.push(`人数：${p.headcount}`)
+    return lines
+  }
+  if (a.kind === 'cancel_reservation') return [`预约 ID：${p.reservationId}`]
+  if (a.kind === 'campus_closure') {
+    return [
+      p.closed ? '操作：开启一键闭馆（全体用户暂停新建预约）' : '操作：恢复开放',
+      `原因：${p.reason || '未填写'}`,
+      p.closed ? '影响：确认后向全体用户广播闭馆通知' : '影响：确认后用户可重新预约'
+    ]
+  }
+  if (a.kind === 'create_closure') {
+    return [
+      `范围：${p.scopeText || p.resourceName || p.resourceId || '未指定'}`,
+      `时间：${p.closureDate} ${String(p.startTime).slice(0, 5)} — ${String(p.endTime).slice(0, 5)}`,
+      `原因：${p.reason || '场馆管理需要'}`,
+      '影响：落在该时段的预约会被自动取消并通知预约者'
+    ]
+  }
+  if (a.kind === 'revoke_closure') {
+    return [
+      `闭馆记录：#${p.closureId}`,
+      `范围：${p.scopeText || '—'}`,
+      `时间：${p.windowText || '—'}`
+    ]
+  }
+  return []
 }
 
 async function scrollToBottom() {
@@ -289,15 +357,15 @@ async function send() {
   scrollToBottom()
   try {
     const history = messages.value
-      .filter(m => m.content)
-      .map(m => ({ role: m.role, content: m.content }))
+      .filter((m) => m.content)
+      .map((m) => ({ role: m.role, content: m.content }))
     const res = await api.aiChat(history)
     if (res.code === 200 || res.code === 0) {
       const reply = res.data || {}
       messages.value.push({
         role: 'assistant',
         content: reply.content || '',
-        actions: (reply.pendingActions || []).map(a => ({ ...a, busy: false, done: false }))
+        actions: (reply.pendingActions || []).map((a) => ({ ...a, busy: false, done: false }))
       })
     } else {
       messages.value.push({ role: 'assistant', content: '⚠ ' + (res.message || 'AI 服务异常') })
@@ -324,7 +392,7 @@ async function confirmAction(a) {
       const res = await api.createReservation(payload)
       if (res.code === 200 || res.code === 0) {
         a.done = true
-        a.doneText = '预约成功，等待验证码打卡'
+        a.doneText = '预约成功，等待定位打卡'
       } else {
         ElMessage.error(res.message || '下单失败')
       }
@@ -335,6 +403,47 @@ async function confirmAction(a) {
         a.doneText = '已取消'
       } else {
         ElMessage.error(res.message || '取消失败')
+      }
+    } else if (a.kind === 'campus_closure') {
+      const res = a.payload.closed
+        ? await api.campusClose(a.payload.reason)
+        : await api.campusOpen()
+      if (res.code === 200 || res.code === 0) {
+        a.done = true
+        a.doneText = a.payload.closed
+          ? '已开启一键闭馆，并已群发闭馆通知'
+          : '已恢复开放，并已通知全体用户'
+        // 通知布局层与闭馆相关页面刷新状态，避免横幅显示旧状态
+        window.dispatchEvent(new Event('campus-status-changed'))
+      } else {
+        ElMessage.error(res.message || '操作失败')
+      }
+    } else if (a.kind === 'create_closure') {
+      const p = a.payload || {}
+      const res = await api.addClosure({
+        resourceType: p.resourceType,
+        resourceId: p.resourceId || null,
+        closureDate: p.closureDate,
+        startTime: p.startTime,
+        endTime: p.endTime,
+        reason: p.reason || undefined
+      })
+      if (res.code === 200 || res.code === 0) {
+        const cancelled = res.data?.cancelled || 0
+        a.done = true
+        a.doneText = cancelled > 0 ? `闭馆成功，已取消 ${cancelled} 条预约并通知` : '闭馆成功'
+        window.dispatchEvent(new Event('campus-status-changed'))
+      } else {
+        ElMessage.error(res.message || '闭馆失败')
+      }
+    } else if (a.kind === 'revoke_closure') {
+      const res = await api.deleteClosure(a.payload.closureId)
+      if (res.code === 200 || res.code === 0) {
+        a.done = true
+        a.doneText = '已撤销该闭馆'
+        window.dispatchEvent(new Event('campus-status-changed'))
+      } else {
+        ElMessage.error(res.message || '撤销失败')
       }
     }
   } finally {
@@ -372,25 +481,31 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped lang="scss">
-.ai-chat-root { /* 承载 fixed 子元素的空容器 */ }
+.ai-chat-root {
+  /* 承载 fixed 子元素的空容器 */
+}
 
 .ai-fab {
   position: fixed;
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #2E76DB, #74B9F5);
+  background: linear-gradient(135deg, #2e76db, #74b9f5);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: grab;
   user-select: none;
-  touch-action: none;      /* 关闭浏览器默认手势，避免拖拽时误触发滚动 */
+  touch-action: none; /* 关闭浏览器默认手势，避免拖拽时误触发滚动 */
   box-shadow: 0 6px 20px rgba(46, 118, 219, 0.45);
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
   z-index: 2000;
-  &:hover { transform: scale(1.08); }
+  &:hover {
+    transform: scale(1.08);
+  }
   &.dragging {
     cursor: grabbing;
     transform: scale(1.12);
@@ -406,8 +521,17 @@ onBeforeUnmount(() => {
   flex-direction: column;
   border-radius: 12px;
   overflow: hidden;
-  :deep(.el-card__header) { padding: 0; cursor: grab; user-select: none; }
-  :deep(.el-card__body) { padding: 0; display: flex; flex-direction: column; height: calc(100% - 55px); }
+  :deep(.el-card__header) {
+    padding: 0;
+    cursor: grab;
+    user-select: none;
+  }
+  :deep(.el-card__body) {
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    height: calc(100% - 55px);
+  }
 }
 
 .hd {
@@ -415,7 +539,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: linear-gradient(90deg, #123A6B, #2E76DB);
+  background: linear-gradient(90deg, #123a6b, #2e76db);
   color: #fff;
 }
 .ttl {
@@ -423,14 +547,23 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   font-weight: 600;
-  .drag-tip { font-size: 11px; opacity: 0.6; font-weight: normal; margin-left: 4px; }
+  .drag-tip {
+    font-size: 11px;
+    opacity: 0.6;
+    font-weight: normal;
+    margin-left: 4px;
+  }
 }
 .hd-btns {
   display: inline-flex;
   gap: 4px;
   cursor: default;
-  :deep(.el-button) { color: #fff; }
-  :deep(.el-button:hover) { color: #d9ecff; }
+  :deep(.el-button) {
+    color: #fff;
+  }
+  :deep(.el-button:hover) {
+    color: #d9ecff;
+  }
 }
 
 .body {
@@ -439,9 +572,17 @@ onBeforeUnmount(() => {
   padding: 12px;
   background: #f8fafc;
 }
-.msg { margin-bottom: 12px; display: flex; flex-direction: column; }
-.msg.user { align-items: flex-end; }
-.msg.assistant { align-items: flex-start; }
+.msg {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+}
+.msg.user {
+  align-items: flex-end;
+}
+.msg.assistant {
+  align-items: flex-start;
+}
 .bubble {
   max-width: 88%;
   padding: 8px 12px;
@@ -453,12 +594,18 @@ onBeforeUnmount(() => {
   border: 1px solid #ebeef5;
 }
 .msg.user .bubble {
-  background: linear-gradient(135deg, #2E76DB, #4E9BF0);
+  background: linear-gradient(135deg, #2e76db, #4e9bf0);
   color: #fff;
   border: none;
 }
-.typing { color: #909399; font-style: italic; }
-.actions { margin-top: 6px; width: 100%; }
+.typing {
+  color: #909399;
+  font-style: italic;
+}
+.actions {
+  margin-top: 6px;
+  width: 100%;
+}
 .act-card {
   background: #fff;
   border: 1px solid #dcdfe6;
@@ -466,10 +613,33 @@ onBeforeUnmount(() => {
   padding: 10px;
   margin-bottom: 6px;
 }
-.act-title { font-weight: 600; color: #303133; margin-bottom: 6px; font-size: 13px; }
-.act-body { color: #606266; font-size: 13px; line-height: 1.6; }
-.act-btns { margin-top: 8px; display: flex; gap: 8px; }
-.act-done { margin-top: 6px; font-size: 12px; color: #67c23a; }
+.act-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.act-body {
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.act-btns {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+.act-done {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #67c23a;
+}
+/* 闭馆类草案是影响全体用户的操作，用红色左边标识提醒管理员再确认 */
+.act-danger {
+  border-color: #fbc4c4;
+  border-left: 3px solid #f56c6c;
+  background: #fffafa;
+}
 .input-row {
   display: flex;
   gap: 8px;

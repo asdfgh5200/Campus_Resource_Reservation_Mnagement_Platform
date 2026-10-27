@@ -119,6 +119,20 @@ class MessageServiceTest {
         assertThat(v.getUserId()).isEqualTo(99L);
         assertThat(v.getDirection()).isEqualTo(UserMessage.DIRECTION_ADMIN_TO_USER);
         assertThat(v.getRefId()).isNull();
+        assertThat(v.getResourceId()).isNull();
+    }
+
+    @Test
+    @DisplayName("notifyUser：带资源 ID 的通知保留 resourceId，用户端可一键跳到地点")
+    void notifyUser_withResource_keepsResourceId() {
+        service.notifyUser(99L, "【维修完成】你报修的「3F-01」已修好", 9L);
+        ArgumentCaptor<UserMessage> cap = ArgumentCaptor.forClass(UserMessage.class);
+        verify(messageMapper).insert(cap.capture());
+        UserMessage v = cap.getValue();
+        assertThat(v.getUserId()).isEqualTo(99L);
+        assertThat(v.getDirection()).isEqualTo(UserMessage.DIRECTION_ADMIN_TO_USER);
+        assertThat(v.getRefId()).isNull();
+        assertThat(v.getResourceId()).isEqualTo(9L);
     }
 
     @Test

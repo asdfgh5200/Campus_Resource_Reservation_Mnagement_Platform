@@ -3,7 +3,9 @@ package com.campus.reservation.service;
 import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ReservationDTO;
+import com.campus.reservation.dto.ReservationTraceVO;
 import com.campus.reservation.entity.Reservation;
+import com.campus.reservation.entity.ReservationLog;
 import com.campus.reservation.entity.Resource;
 import com.campus.reservation.entity.SysUser;
 import com.campus.reservation.entity.Violation;
@@ -27,13 +29,14 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * ReservationService 单元测试：Mock 全部 Mapper 与外部 Service，不启动 Spring、不连接 MySQL。
- * 重点覆盖 create 的核心业务规则（参数/信用分/资源状态/时段冲突/容量等校验分支）与状态流转（取消/打卡/提前释放/暂离/爽约自动流转）。
+ * 重点覆盖 create 的核心业务规则（参数/信用分/资源状态/时段冲突/容量等校验分支）与状态流转（取消/打卡/提前释放/爽约自动流转）。
  */
 @ExtendWith(MockitoExtension.class)
 class ReservationServiceTest {
@@ -163,7 +166,7 @@ class ReservationServiceTest {
         UserContext.set(1L, 0);
         when(userMapper.selectById(1L)).thenReturn(validUser());
         when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
-        when(closureService.isClosedAt(any(), any(), any())).thenReturn(true);
+        when(closureService.isClosedAt(any(), any(), any(), any())).thenReturn(true);
         assertThatThrownBy(() -> service.create(validDto()))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 409);
@@ -180,7 +183,7 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> service.create(dto))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 400);
-        verify(closureService, never()).isClosedAt(any(), any(), any());
+        verify(closureService, never()).isClosedAt(any(), any(), any(), any());
     }
 
     @Test
@@ -191,6 +194,19 @@ class ReservationServiceTest {
         when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
         ReservationDTO dto = validDto();
         dto.setEndTime(dto.getStartTime().minusHours(1));
+        assertThatThrownBy(() -> service.create(dto))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("create：预约时长少于 30 分钟 → 400")
+    void create_tooShort_badRequest() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        ReservationDTO dto = validDto();
+        dto.setEndTime(dto.getStartTime().plusMinutes(29));
         assertThatThrownBy(() -> service.create(dto))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 400);
@@ -350,7 +366,7 @@ class ReservationServiceTest {
     // ---------------- 状态流转 ----------------
 
     @Test
-    @DisplayName("cancel：取消待打卡预约 → 已取消")
+    @DisplayName("cancel：取消待打卡预约 → 已取消并累计取消次数")
     void cancel_success_cancelled() {
         UserContext.set(1L, 0);
         Reservation r = new Reservation();
@@ -362,10 +378,84 @@ class ReservationServiceTest {
         r.setEndTime(LocalDateTime.now().plusHours(2));
         when(reservationMapper.selectById(1L)).thenReturn(r);
         when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
-        when(reservationMapper.selectCount(any())).thenReturn(0L);
+        SysUser user = validUser();
+        user.setCancelCount(1);
+        when(userMapper.selectById(1L)).thenReturn(user);
 
         Reservation result = service.cancel(1L);
         assertThat(result.getStatus()).isEqualTo(Reservation.STATUS_CANCELLED);
+        verify(userMapper).updateById(argThat((SysUser u) -> u.getCancelCount() != null && u.getCancelCount() == 2));
+        // 未达上限不记违规
+        verify(violationMapper, never()).insert(any(Violation.class));
+    }
+
+    @Test
+    @DisplayName("cancel：累计取消达 5 次上限 → 记恶意取消")
+    void cancel_reachLimit_recordsViolation() {
+        UserContext.set(1L, 0);
+        Reservation r = new Reservation();
+        r.setId(1L);
+        r.setUserId(1L);
+        r.setResourceId(1L);
+        r.setStatus(Reservation.STATUS_PENDING);
+        r.setStartTime(LocalDateTime.now().plusHours(1));
+        r.setEndTime(LocalDateTime.now().plusHours(2));
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+        SysUser user = validUser();
+        user.setCancelCount(ReservationService.CANCEL_LIMIT - 1);
+        when(userMapper.selectById(1L)).thenReturn(user);
+
+        service.cancel(1L);
+
+        verify(violationMapper).insert(argThat((Violation v) -> v.getType() == Violation.TYPE_BAD_CANCEL));
+    }
+
+    @Test
+    @DisplayName("cancel：累计取消已达上限 → 403 且预约状态与计数都不变")
+    void cancel_atLimit_forbidden() {
+        UserContext.set(1L, 0);
+        Reservation r = new Reservation();
+        r.setId(1L);
+        r.setUserId(1L);
+        r.setResourceId(1L);
+        r.setStatus(Reservation.STATUS_PENDING);
+        r.setStartTime(LocalDateTime.now().plusHours(1));
+        r.setEndTime(LocalDateTime.now().plusHours(2));
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+        SysUser user = validUser();
+        user.setCancelCount(ReservationService.CANCEL_LIMIT);
+        when(userMapper.selectById(1L)).thenReturn(user);
+
+        assertThatThrownBy(() -> service.cancel(1L))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("上限")
+                .hasFieldOrPropertyWithValue("code", 403);
+        // 计数不再增长，也不可能出现 6/5 这类越界值
+        verify(userMapper, never()).updateById(any(SysUser.class));
+        assertThat(r.getStatus()).isEqualTo(Reservation.STATUS_PENDING);
+    }
+
+    @Test
+    @DisplayName("cancel：管理员代办不受上限限制，计数封顶在上限")
+    void cancel_atLimit_byAdminAllowed() {
+        UserContext.set(99L, 1);
+        Reservation r = new Reservation();
+        r.setId(1L);
+        r.setUserId(1L);
+        r.setResourceId(1L);
+        r.setStatus(Reservation.STATUS_PENDING);
+        r.setStartTime(LocalDateTime.now().plusHours(1));
+        r.setEndTime(LocalDateTime.now().plusHours(2));
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+        SysUser user = validUser();
+        user.setCancelCount(ReservationService.CANCEL_LIMIT);
+        when(userMapper.selectById(1L)).thenReturn(user);
+
+        Reservation result = service.cancel(1L);
+
+        assertThat(result.getStatus()).isEqualTo(Reservation.STATUS_CANCELLED);
+        verify(userMapper).updateById(argThat((SysUser u) -> u.getCancelCount() == ReservationService.CANCEL_LIMIT));
     }
 
     @Test
@@ -406,25 +496,6 @@ class ReservationServiceTest {
     }
 
     @Test
-    @DisplayName("away：暂离 30 分钟设置暂离截止时间")
-    void away_success_setsAwayUntil() {
-        UserContext.set(1L, 0);
-        Reservation r = new Reservation();
-        r.setId(1L);
-        r.setUserId(1L);
-        r.setResourceId(1L);
-        r.setStatus(Reservation.STATUS_IN_USE);
-        r.setStartTime(LocalDateTime.now().minusHours(1));
-        r.setEndTime(LocalDateTime.now().plusHours(1));
-        when(reservationMapper.selectById(1L)).thenReturn(r);
-        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
-        when(resourceMapper.selectBatchIds(any())).thenReturn(List.of(openResource(3, 1)));
-
-        Reservation result = service.away(1L, 30);
-        assertThat(result.getAwayUntil()).isNotNull();
-    }
-
-    @Test
     @DisplayName("delete：删除已结束的预约并调用 deleteById")
     void delete_success_deletesFinished() {
         UserContext.set(1L, 0);
@@ -441,6 +512,62 @@ class ReservationServiceTest {
 
         service.delete(1L);
         verify(reservationMapper).deleteById(1L);
+    }
+
+    @Test
+    @DisplayName("trace：本人预约 → 返回预约本体 + 操作时间线 + 关联违规")
+    void trace_ownReservation_returnsLogsAndViolations() {
+        UserContext.set(1L, 0);
+        Reservation r = new Reservation();
+        r.setId(7L);
+        r.setUserId(1L);
+        r.setResourceId(1L);
+        r.setStatus(Reservation.STATUS_NOSHOW);
+        r.setStartTime(LocalDateTime.now().minusHours(2));
+        r.setEndTime(LocalDateTime.now().minusHours(1));
+        when(reservationMapper.selectList(any())).thenReturn(List.of()); // 懒惰结算无待处理
+        when(reservationMapper.selectById(7L)).thenReturn(r);
+        when(resourceMapper.selectBatchIds(any())).thenReturn(List.of(openResource(3, 1)));
+        when(logService.listByReservation(7L)).thenReturn(List.of(
+                log(ReservationLog.ACTION_CREATE), log(ReservationLog.ACTION_NOSHOW)));
+        Violation v = new Violation();
+        v.setId(3L);
+        v.setReservationId(7L);
+        v.setType(Violation.TYPE_NOSHOW);
+        v.setStatus(1);
+        when(violationMapper.selectList(any())).thenReturn(List.of(v));
+
+        ReservationTraceVO trace = service.trace(7L);
+
+        assertThat(trace.getReservation().getId()).isEqualTo(7L);
+        assertThat(trace.getReservation().getResource().getName()).isEqualTo("测试资源");
+        assertThat(trace.getLogs()).extracting(ReservationLog::getAction)
+                .containsExactly(ReservationLog.ACTION_CREATE, ReservationLog.ACTION_NOSHOW);
+        assertThat(trace.getViolations()).singleElement()
+                .satisfies(item -> assertThat(item.getType()).isEqualTo(Violation.TYPE_NOSHOW));
+    }
+
+    @Test
+    @DisplayName("trace：查看他人预约 → 403，不泄露日志与违规")
+    void trace_othersReservation_forbidden() {
+        UserContext.set(2L, 0);
+        Reservation r = new Reservation();
+        r.setId(7L);
+        r.setUserId(1L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(7L)).thenReturn(r);
+
+        assertThatThrownBy(() -> service.trace(7L))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 403);
+        verify(logService, never()).listByReservation(any());
+    }
+
+    private ReservationLog log(int action) {
+        ReservationLog log = new ReservationLog();
+        log.setAction(action);
+        log.setReservationId(7L);
+        return log;
     }
 
     @Test

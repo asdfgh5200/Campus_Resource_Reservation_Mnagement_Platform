@@ -59,6 +59,21 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("登录：账号不存在 → 404 并提示先注册")
+    void login_userNotFound_notFound() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+
+        LoginDTO dto = new LoginDTO();
+        dto.setUsername("20240001");
+        dto.setPassword("secret123");
+
+        assertThatThrownBy(() -> service.login(dto))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 404)
+                .hasMessageContaining("尚未注册");
+    }
+
+    @Test
     @DisplayName("登录：密码错误 → 401")
     void login_wrongPassword_unauthorized() {
         SysUser user = new SysUser();
@@ -121,7 +136,8 @@ class UserServiceTest {
     @DisplayName("注册：密码长度不足 → 400")
     void register_shortPassword_badRequest() {
         RegisterDTO dto = new RegisterDTO();
-        dto.setUsername("alice");
+        dto.setUsername("20240001");
+        dto.setNickname("张三");
         dto.setPassword("123");
         assertThatThrownBy(() -> service.register(dto))
                 .isInstanceOf(BizException.class)
@@ -129,10 +145,11 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("注册：用户名格式不合法 → 400")
+    @DisplayName("注册：学号格式不合法 → 400")
     void register_badUsernameFormat_badRequest() {
         RegisterDTO dto = new RegisterDTO();
         dto.setUsername("a b");
+        dto.setNickname("张三");
         dto.setPassword("secret123");
         assertThatThrownBy(() -> service.register(dto))
                 .isInstanceOf(BizException.class)
@@ -140,23 +157,24 @@ class UserServiceTest {
     }
 
     @Test
-    @DisplayName("注册：手机号格式不合法 → 400")
-    void register_badPhone_badRequest() {
+    @DisplayName("注册：姓名为空 → 400")
+    void register_blankNickname_badRequest() {
         RegisterDTO dto = new RegisterDTO();
-        dto.setUsername("alice");
+        dto.setUsername("20240001");
         dto.setPassword("secret123");
-        dto.setPhone("12345");
         assertThatThrownBy(() -> service.register(dto))
                 .isInstanceOf(BizException.class)
-                .hasFieldOrPropertyWithValue("code", 400);
+                .hasFieldOrPropertyWithValue("code", 400)
+                .hasMessageContaining("姓名");
     }
 
     @Test
-    @DisplayName("注册：用户名已存在 → 409")
+    @DisplayName("注册：学号已存在 → 409")
     void register_duplicateUsername_conflict() {
         when(userMapper.selectCount(any())).thenReturn(1L);
         RegisterDTO dto = new RegisterDTO();
-        dto.setUsername("alice");
+        dto.setUsername("20240001");
+        dto.setNickname("张三");
         dto.setPassword("secret123");
         assertThatThrownBy(() -> service.register(dto))
                 .isInstanceOf(BizException.class)
@@ -168,13 +186,14 @@ class UserServiceTest {
     void register_success_returnsUser() {
         when(userMapper.selectCount(any())).thenReturn(0L);
         RegisterDTO dto = new RegisterDTO();
-        dto.setUsername("alice");
+        dto.setUsername("20240001");
         dto.setPassword("secret123");
-        dto.setNickname("Alice");
-        dto.setPhone("13800138000");
+        dto.setNickname("张三");
 
         SysUser user = service.register(dto);
-        assertThat(user.getUsername()).isEqualTo("alice");
+        assertThat(user.getUsername()).isEqualTo("20240001");
+        assertThat(user.getNickname()).isEqualTo("张三");
+        assertThat(user.getPhone()).isNull();
         assertThat(user.getRole()).isEqualTo(0);
         assertThat(user.getCreditScore()).isEqualTo(100);
         assertThat(user.getStatus()).isEqualTo(1);

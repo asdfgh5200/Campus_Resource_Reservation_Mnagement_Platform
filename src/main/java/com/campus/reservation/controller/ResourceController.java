@@ -16,6 +16,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/resources")
 @RequiredArgsConstructor
@@ -29,9 +32,17 @@ public class ResourceController {
                                        @RequestParam(required = false) Integer type,
                                        @RequestParam(required = false) String keyword,
                                        @RequestParam(required = false) Integer status,
+                                       @RequestParam(required = false) String campus,
                                        @RequestParam(required = false) String building,
-                                       @RequestParam(required = false) String floor) {
-        return Result.ok(resourceService.page(current, size, type, keyword, status, building, floor));
+                                       @RequestParam(required = false) String floor,
+                                       @RequestParam(required = false) String roomType) {
+        return Result.ok(resourceService.page(current, size, type, keyword, status, campus, building, floor, roomType));
+    }
+
+    /** 按类型统计各校区楼栋（含该楼栋真实楼层与教室类型），供前端级联筛选 */
+    @GetMapping("/buildings")
+    public Result<List<Map<String, Object>>> buildings(@RequestParam(required = false) Integer type) {
+        return Result.ok(resourceService.buildings(type));
     }
 
     @GetMapping("/{id}")

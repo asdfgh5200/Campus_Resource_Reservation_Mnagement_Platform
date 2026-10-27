@@ -33,7 +33,7 @@ public class MessageController {
         return Result.ok(messageService.ask(body.get("content")));
     }
 
-    /** 我的收件箱（回复 / 通知） */
+    /** 我的消息：我的留言 + 收到的回复/通知（用户端按「回复」「通知」分类展示） */
     @GetMapping("/mine")
     public Result<List<UserMessage>> mine() {
         return Result.ok(messageService.myMessages());

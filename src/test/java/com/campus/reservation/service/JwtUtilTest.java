@@ -38,10 +38,11 @@ class JwtUtilTest {
     void validate_tamperedSignature_returnsNull() {
         String token = jwtUtil.generate(1L, 0);
         String[] parts = token.split("\\.");
-        // 翻转签名末位字符
-        char last = parts[1].charAt(parts[1].length() - 1);
-        String flipped = last == 'A' ? "B" : "A";
-        String tampered = parts[0] + "." + parts[1].substring(0, parts[1].length() - 1) + flipped;
+        // 翻转签名首字符：首字符的 6 位均参与解码，能保证篡改后字节必然不同
+        // （末字符含 2 位无效位，'A' 与 'B' 可能解码为相同字节，会导致测试随机失败）
+        String sig = parts[1];
+        char first = sig.charAt(0);
+        String tampered = parts[0] + "." + (first == 'A' ? "B" : "A") + sig.substring(1);
         assertThat(jwtUtil.validate(tampered)).isNull();
     }
 

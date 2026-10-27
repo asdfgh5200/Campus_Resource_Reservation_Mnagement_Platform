@@ -10,6 +10,8 @@ import java.time.LocalTime;
 public class ClosureDTO {
     /** 资源类型：2 实验室、3 图书馆、4 体育馆 */
     private Integer resourceType;
+    /** 闭馆范围：为空=整类闭馆；非空=仅闭该具体资源 */
+    private Long resourceId;
     /** 闭馆日期 */
     private LocalDate closureDate;
     /** 闭馆开始时刻 */

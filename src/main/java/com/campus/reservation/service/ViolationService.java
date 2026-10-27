@@ -3,6 +3,7 @@ package com.campus.reservation.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.BizException;
+import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ViolationDTO;
 import com.campus.reservation.entity.SysUser;
 import com.campus.reservation.entity.Violation;
@@ -93,7 +94,7 @@ public class ViolationService {
         return result;
     }
 
-    /** 我的违规概览：今日次数 / 累计次数 / 今日是否被禁止预约 */
+    /** 我的违规概览：今日次数 / 累计次数 / 今日是否被禁止预约 / 取消次数与能否继续取消 */
     public Map<String, Object> mySummary(Long userId) {
         Long todayCount = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
                 .eq(Violation::getUserId, userId)
@@ -102,19 +103,40 @@ public class ViolationService {
         Long totalCount = violationMapper.selectCount(Wrappers.<Violation>lambdaQuery()
                 .eq(Violation::getUserId, userId)
                 .eq(Violation::getStatus, 1));
+        SysUser user = userMapper.selectById(userId);
+        int cancelCount = user == null || user.getCancelCount() == null ? 0 : user.getCancelCount();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("todayCount", todayCount == null ? 0 : todayCount);
         m.put("totalCount", totalCount == null ? 0 : totalCount);
         m.put("limit", ReservationService.DAILY_VIOLATION_LIMIT);
         m.put("restricted", todayCount != null && todayCount >= ReservationService.DAILY_VIOLATION_LIMIT);
+        m.put("cancelCount", cancelCount);
+        m.put("cancelLimit", ReservationService.CANCEL_LIMIT);
+        // 取消次数达上限后用户不能再自行取消预约，前端据此置灰按钮
+        m.put("canCancel", cancelCount < ReservationService.CANCEL_LIMIT);
         return m;
+    }
+
+    /** 管理端：撤销（status=0）或恢复（status=1）一条违规记录 */
+    @Transactional
+    public void updateStatus(Long id, Integer status) {
+        UserContext.requireAdmin();
+        if (status == null || (status != 0 && status != 1)) {
+            throw BizException.badRequest("违规状态不合法");
+        }
+        Violation violation = violationMapper.selectById(id);
+        if (violation == null) {
+            throw BizException.notFound("违规记录不存在");
+        }
+        violation.setStatus(status);
+        violationMapper.updateById(violation);
     }
 
     /** 手动登记违规（管理员）：仅记录，不涉及信用分 */
     @Transactional
     public Violation add(ViolationDTO dto) {
         if (dto.getUserId() == null || dto.getType() == null) {
-            throw BizException.badRequest("缺少必要参数（userId/type）");
+            throw BizException.badRequest("缺少必要参数");
         }
         SysUser user = userMapper.selectById(dto.getUserId());
         if (user == null) {

@@ -57,12 +57,14 @@ public class MessageService {
         return msg;
     }
 
-    /** 我收到的消息（回复/通知），仅普通用户查看自己 */
+    /**
+     * 我的消息：自己发出的留言 + 收到的回复/通知，按时间倒序。
+     * 用户端据此把「回复」还原成「我的留言 → 管理员回复」的对话，并把「通知」单独归为一类。
+     */
     public List<UserMessage> myMessages() {
         Long userId = UserContext.requireUserId();
         return messageMapper.selectList(Wrappers.<UserMessage>lambdaQuery()
                 .eq(UserMessage::getUserId, userId)
-                .eq(UserMessage::getDirection, UserMessage.DIRECTION_ADMIN_TO_USER)
                 .orderByDesc(UserMessage::getCreatedAt));
     }
 
@@ -198,15 +200,45 @@ public class MessageService {
     }
 
     /**
+     * 管理端：向指定用户推送一条通知（用户管理详情里的「发送通知」）。
+     * 与广播通知同属 direction=2，用户端「消息中心」可见。
+     */
+    @Transactional
+    public void adminNotify(Long userId, String content) {
+        UserContext.requireAdmin();
+        if (!StringUtils.hasText(content)) {
+            throw BizException.badRequest("通知内容不能为空");
+        }
+        if (content.length() > 1000) {
+            throw BizException.badRequest("通知内容不能超过 1000 字");
+        }
+        SysUser user = userMapper.selectById(userId);
+        if (user == null) {
+            throw BizException.notFound("用户不存在");
+        }
+        notifyUser(userId, content.trim());
+    }
+
+    /**
      * 系统通知（内部调用，不做登录校验）：向指定用户推送 direction=2 的消息。
      * 用于资源变更提醒等场景。
      */
     @Transactional
     public void notifyUser(Long userId, String content) {
+        notifyUser(userId, content, null);
+    }
+
+    /**
+     * 系统通知（内部调用，不做登录校验）：同上，并带上关联资源，
+     * 用户端「通知」可以直接点开到对应地点（如维修进度通知）。
+     */
+    @Transactional
+    public void notifyUser(Long userId, String content, Long resourceId) {
         UserMessage msg = new UserMessage();
         msg.setUserId(userId);
         msg.setDirection(UserMessage.DIRECTION_ADMIN_TO_USER);
         msg.setContent(content);
+        msg.setResourceId(resourceId);
         msg.setIsRead(0);
         messageMapper.insert(msg);
     }

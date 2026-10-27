@@ -25,6 +25,16 @@ public final class ToolUtils {
         return v == null ? null : v.toString();
     }
 
+    /** 布尔参数：兼容 true/false 与 "true"/"false"/"1"/"0" 两种模型输出风格 */
+    public static Boolean boolOrNull(Object v) {
+        if (v == null) return null;
+        if (v instanceof Boolean b) return b;
+        String s = v.toString().trim();
+        if ("true".equalsIgnoreCase(s) || "1".equals(s) || "yes".equalsIgnoreCase(s)) return Boolean.TRUE;
+        if ("false".equalsIgnoreCase(s) || "0".equals(s) || "no".equalsIgnoreCase(s)) return Boolean.FALSE;
+        return null;
+    }
+
     /**
      * 将 LLM 可能输出的 ISO / 缺秒 / 带 T 的时间字符串归一化为项目统一的 yyyy-MM-dd HH:mm:ss。
      * 无法解析时返回 null。

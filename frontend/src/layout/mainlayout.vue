@@ -1,12 +1,15 @@
 <template>
   <el-container class="layout">
-    <!-- 侧边栏 -->
-    <el-aside :width="collapsed ? '64px' : '220px'" class="sidebar">
+    <!-- 侧边栏：桌面端固定，移动端由菜单按钮展开 -->
+    <el-aside :width="sidebarWidth" class="sidebar" :class="{ 'is-mobile-open': mobileMenuOpen }">
       <div class="logo">
-        <span class="logo-icon"><el-icon :size="22"><School /></el-icon></span>
+        <span class="logo-icon"
+          ><el-icon :size="22"><School /></el-icon
+        ></span>
         <span v-show="!collapsed" class="logo-text">校园预约</span>
       </div>
       <el-menu
+        ref="menuRef"
         :default-active="activeMenu"
         :collapse="collapsed"
         :router="true"
@@ -15,11 +18,11 @@
         active-text-color="#ffffff"
         class="sidebar-menu"
       >
-        <el-menu-item index="/home">
+        <el-menu-item index="/home" v-if="!userStore.isAdmin">
           <el-icon><HomeFilled /></el-icon>
           <template #title>资源中心</template>
         </el-menu-item>
-        <el-menu-item index="/my-reservations">
+        <el-menu-item index="/my-reservations" v-if="!userStore.isAdmin">
           <el-icon><Calendar /></el-icon>
           <template #title>我的预约</template>
         </el-menu-item>
@@ -30,22 +33,27 @@
             <el-badge v-if="myUnread > 0" :value="myUnread" class="menu-badge" />
           </template>
         </el-menu-item>
-        <el-sub-menu v-if="userStore.isAdmin" index="admin">
+        <!-- 管理端：数据概览 / 资源管理（二级：资源档案、预约管理、闭馆管理）/ 用户管理 -->
+        <el-menu-item v-if="userStore.isAdmin" index="/admin/dashboard">
+          <el-icon><Odometer /></el-icon>
+          <template #title>数据概览</template>
+        </el-menu-item>
+        <el-sub-menu v-if="userStore.isAdmin" index="resource-group" popper-class="resource-popper">
           <template #title>
-            <el-icon><Setting /></el-icon>
-            <span>管理后台</span>
+            <el-icon><Files /></el-icon>
+            <span>资源管理</span>
           </template>
-          <el-menu-item index="/admin/dashboard">数据概览</el-menu-item>
+          <el-menu-item index="/admin/resources">资源档案</el-menu-item>
           <el-menu-item index="/admin/reservations">预约管理</el-menu-item>
-          <el-menu-item index="/admin/resources">资源管理</el-menu-item>
-          <el-menu-item index="/admin/courses">课表管理</el-menu-item>
-          <el-menu-item index="/admin/violations">违规管理</el-menu-item>
           <el-menu-item index="/admin/closures">闭馆管理</el-menu-item>
-          <el-menu-item index="/admin/messages">
-            <span>留言回复</span>
-            <el-badge v-if="adminUnread > 0" :value="adminUnread" class="menu-badge" />
-          </el-menu-item>
         </el-sub-menu>
+        <el-menu-item index="/admin/users" v-if="userStore.isAdmin">
+          <el-icon><User /></el-icon>
+          <template #title>
+            <span>用户管理</span>
+            <el-badge v-if="adminUnread > 0" :value="adminUnread" class="menu-badge" />
+          </template>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -53,7 +61,7 @@
     <el-container>
       <el-header class="header">
         <div class="header-left">
-          <el-icon class="collapse-btn" @click="collapsed = !collapsed">
+          <el-icon class="collapse-btn" @click="toggleMenu">
             <Fold v-if="!collapsed" />
             <Expand v-else />
           </el-icon>
@@ -91,7 +99,7 @@
           type="error"
           show-icon
           :closable="false"
-          title="当前已闭馆，普通用户预约已暂停，等待管理员恢复开放"
+          title="校园当前处于闭馆状态，暂停开放预约，恢复时间以平台通知为准"
         />
         <router-view v-slot="{ Component }">
           <transition name="fade" mode="out-in">
@@ -104,10 +112,11 @@
     <!-- 智约机器人悬浮窗 -->
     <AiChatWidget />
   </el-container>
+  <div v-if="mobileMenuOpen" class="mobile-mask" @click="mobileMenuOpen = false"></div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import api from '@/api'
@@ -119,6 +128,11 @@ const router = useRouter()
 const userStore = useUserStore()
 
 const collapsed = ref(false)
+const mobileMenuOpen = ref(false)
+const menuRef = ref(null)
+
+// 管理端：数据概览 + 资源管理（三个子页面）+ 用户管理
+const isMobile = ref(window.innerWidth <= 768)
 const campusClosed = ref(false)
 const myUnread = ref(0)
 const adminUnread = ref(0)
@@ -131,8 +145,23 @@ const clockText = computed(() => {
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 })
-onMounted(() => { clockTimer = setInterval(() => (now.value = new Date()), 1000); refreshGlobalStatus(); statusTimer = setInterval(refreshGlobalStatus, 30000); window.addEventListener('campus-unread-changed', refreshGlobalStatus) })
-onBeforeUnmount(() => { clearInterval(clockTimer); clearInterval(statusTimer); window.removeEventListener('campus-unread-changed', refreshGlobalStatus) })
+onMounted(() => {
+  clockTimer = setInterval(() => (now.value = new Date()), 1000)
+  refreshGlobalStatus()
+  statusTimer = setInterval(refreshGlobalStatus, 30000)
+  window.addEventListener('campus-unread-changed', refreshGlobalStatus)
+  // 闭馆/恢复开放在智约机器人卡片或后台页面生效后，横幅与未读数需要立即跟上
+  window.addEventListener('campus-status-changed', refreshGlobalStatus)
+  window.addEventListener('resize', syncViewport)
+})
+
+onBeforeUnmount(() => {
+  clearInterval(clockTimer)
+  clearInterval(statusTimer)
+  window.removeEventListener('campus-unread-changed', refreshGlobalStatus)
+  window.removeEventListener('campus-status-changed', refreshGlobalStatus)
+  window.removeEventListener('resize', syncViewport)
+})
 
 async function refreshGlobalStatus() {
   try {
@@ -145,10 +174,16 @@ async function refreshGlobalStatus() {
       const a = await api.getAdminUnreadCount()
       if (a.code === 0 || a.code === 200) adminUnread.value = a.data?.count || 0
     }
-  } catch (e) { /* 忽略，不阻断页面 */ }
+  } catch (e) {
+    /* 忽略，不阻断页面 */
+  }
 }
 
 const activeMenu = computed(() => route.path)
+const sidebarWidth = computed(() => {
+  if (isMobile.value) return mobileMenuOpen.value ? '220px' : '0px'
+  return collapsed.value ? '64px' : '220px'
+})
 const pageTitle = computed(() => route.meta.title || '校园资源预约平台')
 const avatarText = computed(() => {
   const name = userStore.userInfo?.nickname || 'U'
@@ -163,6 +198,26 @@ function onCommand(cmd) {
     router.push('/profile')
   }
 }
+
+function toggleMenu() {
+  if (isMobile.value) {
+    mobileMenuOpen.value = !mobileMenuOpen.value
+    return
+  }
+  collapsed.value = !collapsed.value
+}
+
+function syncViewport() {
+  isMobile.value = window.innerWidth <= 768
+  if (!isMobile.value) mobileMenuOpen.value = false
+}
+
+watch(
+  () => route.path,
+  () => {
+    mobileMenuOpen.value = false
+  }
+)
 </script>
 
 <style scoped lang="scss">
@@ -171,9 +226,10 @@ function onCommand(cmd) {
 }
 
 .sidebar {
-  background: linear-gradient(180deg, #123A6B 0%, #0A1F3C 100%);
+  background: linear-gradient(180deg, #123a6b 0%, #0a1f3c 100%);
   transition: width 0.3s;
   overflow: hidden;
+  z-index: 30;
 
   .logo {
     height: 60px;
@@ -186,18 +242,62 @@ function onCommand(cmd) {
     font-weight: 600;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 
-    .logo-icon { font-size: 24px; }
+    .logo-icon {
+      font-size: 24px;
+    }
   }
 
   .sidebar-menu {
     border: none;
 
+    /* 一级项与一级分组标题统一字号，二级项同样取这个值，保证整栏字号一致 */
     :deep(.el-menu-item),
     :deep(.el-sub-menu__title) {
-      &:hover { background-color: rgba(255, 255, 255, 0.06) !important; }
+      font-size: 14px;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.06) !important;
+      }
     }
     :deep(.el-menu-item.is-active) {
-      background: linear-gradient(90deg, #2E76DB 0%, #144E9C 100%) !important;
+      background: linear-gradient(90deg, #2e76db 0%, #144e9c 100%) !important;
+    }
+
+    /* 二级菜单：背景压暗 + 文字右缩进 + 圆点引导，和一级项区分层级（字号与一级保持一致） */
+    :deep(.el-sub-menu .el-menu) {
+      background: rgba(0, 0, 0, 0.18) !important;
+      padding: 2px 0;
+    }
+    :deep(.el-sub-menu .el-menu-item) {
+      padding-left: 56px !important;
+      height: 40px;
+      line-height: 40px;
+      font-size: 14px;
+      font-weight: 400;
+      position: relative;
+
+      &::before {
+        content: '';
+        position: absolute;
+        left: 36px;
+        top: 50%;
+        width: 5px;
+        height: 5px;
+        margin-top: -2.5px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.32);
+        transition: background 0.2s;
+      }
+      &:hover::before {
+        background: rgba(255, 255, 255, 0.7);
+      }
+      &.is-active {
+        box-shadow: inset 3px 0 0 #7cc0ff;
+
+        &::before {
+          background: #fff;
+        }
+      }
     }
   }
 }
@@ -221,9 +321,15 @@ function onCommand(cmd) {
       cursor: pointer;
       color: #5a5e66;
       transition: color 0.2s;
-      &:hover { color: #409eff; }
+      &:hover {
+        color: #409eff;
+      }
     }
-    .page-title { font-size: 16px; font-weight: 600; color: #303133; }
+    .page-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #303133;
+    }
   }
 
   .header-right {
@@ -248,11 +354,14 @@ function onCommand(cmd) {
       outline: none;
 
       .avatar {
-        background: linear-gradient(135deg, #2E76DB, #74B9F5);
+        background: linear-gradient(135deg, #2e76db, #74b9f5);
         color: #fff;
         font-weight: 600;
       }
-      .user-name { font-size: 14px; color: #303133; }
+      .user-name {
+        font-size: 14px;
+        color: #303133;
+      }
     }
   }
 }
@@ -269,5 +378,69 @@ function onCommand(cmd) {
 .menu-badge {
   margin-left: 8px;
   vertical-align: middle;
+}
+
+.mobile-mask {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .layout {
+    position: relative;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    transition: width 0.25s ease;
+    box-shadow: 8px 0 24px rgba(10, 31, 60, 0.2);
+  }
+
+  .sidebar:not(.is-mobile-open) {
+    box-shadow: none;
+  }
+  .main-content {
+    padding: 12px;
+  }
+  .header {
+    padding: 0 12px;
+  }
+  .header-right .clock,
+  .header-right .user-name {
+    display: none;
+  }
+  .mobile-mask {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    background: rgba(10, 31, 60, 0.35);
+  }
+}
+</style>
+
+<style lang="scss">
+/* 侧栏折叠时「资源管理」二级菜单的弹出层配色 */
+.resource-popper {
+  .el-menu {
+    background: #0f2a4d;
+    padding: 4px 0;
+
+    .el-menu-item {
+      height: 40px;
+      line-height: 40px;
+      font-size: 14px;
+      font-weight: 400;
+      color: #bfcbd9;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.08) !important;
+      }
+      &.is-active {
+        background: linear-gradient(90deg, #2e76db 0%, #144e9c 100%) !important;
+        color: #fff;
+      }
+    }
+  }
 }
 </style>

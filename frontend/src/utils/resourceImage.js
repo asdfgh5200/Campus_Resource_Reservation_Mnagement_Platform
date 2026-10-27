@@ -8,12 +8,12 @@ const typeImages = {
 
 // 体育馆各场馆实拍图（按资源名称匹配）
 const gymImageMap = {
-  '游泳馆': '/assets/gym-swimming.png',
-  '乒乓球馆': '/assets/gym-tabletennis.png',
-  '篮球场': '/assets/gym-basketball.png',
-  '羽毛球场': '/assets/gym-badminton.png',
-  '网球场': '/assets/gym-tennis.png',
-  '排球场': '/assets/gym-volleyball.png'
+  游泳馆: '/assets/gym-swimming.png',
+  乒乓球馆: '/assets/gym-tabletennis.png',
+  篮球场: '/assets/gym-basketball.png',
+  羽毛球场: '/assets/gym-badminton.png',
+  网球场: '/assets/gym-tennis.png',
+  排球场: '/assets/gym-volleyball.png'
 }
 
 /**

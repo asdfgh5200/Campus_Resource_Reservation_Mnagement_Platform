@@ -76,14 +76,14 @@ class ClosureServiceTest {
         LocalDate d = LocalDate.now().plusDays(2);
         when(closureMapper.selectList(any())).thenReturn(List.of(closure(3, d, "10:00", "12:00")));
 
-        // 10:30~11:00 图书馆，落在闭馆窗口内
-        assertThat(service.isClosedAt(3, LocalDateTime.of(d, LocalTime.of(10, 30)),
+        // 10:30~11:00 图书馆，落在闭馆窗口内（resourceId 为空表示整类闭馆）
+        assertThat(service.isClosedAt(null, 3, LocalDateTime.of(d, LocalTime.of(10, 30)),
                 LocalDateTime.of(d, LocalTime.of(11, 0)))).isTrue();
         // 同类型但 13:00 之后，不相交
-        assertThat(service.isClosedAt(3, LocalDateTime.of(d, LocalTime.of(13, 0)),
+        assertThat(service.isClosedAt(null, 3, LocalDateTime.of(d, LocalTime.of(13, 0)),
                 LocalDateTime.of(d, LocalTime.of(14, 0)))).isFalse();
         // 类型不符
-        assertThat(service.isClosedAt(2, LocalDateTime.of(d, LocalTime.of(10, 30)),
+        assertThat(service.isClosedAt(null, 2, LocalDateTime.of(d, LocalTime.of(10, 30)),
                 LocalDateTime.of(d, LocalTime.of(11, 0)))).isFalse();
     }
 
@@ -93,7 +93,7 @@ class ClosureServiceTest {
         LocalDate d = LocalDate.now().plusDays(2);
         when(closureMapper.selectList(any())).thenReturn(List.of(closure(3, d, "10:00", "12:00")));
         // 预约 12:00 起，闭馆 12:00 止：start.isBefore(cEnd=12:00) 为 false → 不相交
-        assertThat(service.isClosedAt(3, LocalDateTime.of(d, LocalTime.of(12, 0)),
+        assertThat(service.isClosedAt(null, 3, LocalDateTime.of(d, LocalTime.of(12, 0)),
                 LocalDateTime.of(d, LocalTime.of(13, 0)))).isFalse();
     }
 

@@ -24,7 +24,7 @@ public class HolidayService {
     public Holiday add(HolidayDTO dto) {
         if (dto.getName() == null || dto.getName().isBlank()
                 || dto.getStartDate() == null || dto.getEndDate() == null) {
-            throw BizException.badRequest("缺少必要参数（name/startDate/endDate）");
+            throw BizException.badRequest("缺少必要参数");
         }
         if (dto.getEndDate().isBefore(dto.getStartDate())) {
             throw BizException.badRequest("结束日期不能早于开始日期");

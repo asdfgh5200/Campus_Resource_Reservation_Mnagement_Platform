@@ -8,7 +8,9 @@
 
     <div class="login-card">
       <div class="login-header">
-        <div class="logo-icon"><el-icon :size="32"><School /></el-icon></div>
+        <div class="logo-icon">
+          <el-icon :size="32"><School /></el-icon>
+        </div>
         <h1 class="title">校园资源预约平台</h1>
         <p class="subtitle">统一管理教室 · 实验室 · 图书馆 · 体育馆</p>
       </div>
@@ -28,13 +30,26 @@
         @submit.prevent="handleLogin"
       >
         <el-form-item prop="username">
-          <el-input v-model="loginForm.username" placeholder="请输入用户名" :prefix-icon="User" />
+          <el-input
+            v-model="loginForm.username"
+            placeholder="请输入学号或工号"
+            :prefix-icon="User"
+          />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" :prefix-icon="Lock" show-password @keyup.enter="handleLogin" />
+          <el-input
+            v-model="loginForm.password"
+            type="password"
+            placeholder="请输入密码"
+            :prefix-icon="Lock"
+            show-password
+            @keyup.enter="handleLogin"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">登 录</el-button>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin"
+            >登 录</el-button
+          >
         </el-form-item>
       </el-form>
 
@@ -47,23 +62,36 @@
         size="large"
         @submit.prevent="handleRegister"
       >
-        <el-form-item prop="username">
-          <el-input v-model="registerForm.username" placeholder="用户名（3-20 位字母/数字/下划线）" :prefix-icon="User" />
-        </el-form-item>
         <el-form-item prop="nickname">
-          <el-input v-model="registerForm.nickname" placeholder="姓名 / 昵称（选填）" :prefix-icon="Postcard" />
+          <el-input
+            v-model="registerForm.nickname"
+            placeholder="请输入姓名"
+            :prefix-icon="Postcard"
+            maxlength="20"
+          />
         </el-form-item>
-        <el-form-item prop="phone">
-          <el-input v-model="registerForm.phone" placeholder="手机号（选填）" :prefix-icon="Iphone" maxlength="11" />
+        <el-form-item prop="username">
+          <el-input
+            v-model="registerForm.username"
+            placeholder="请输入学号（登录时使用）"
+            :prefix-icon="User"
+            maxlength="20"
+          />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="registerForm.password" type="password" placeholder="密码（6-32 位）" :prefix-icon="Lock" show-password />
-        </el-form-item>
-        <el-form-item prop="confirmPassword">
-          <el-input v-model="registerForm.confirmPassword" type="password" placeholder="确认密码" :prefix-icon="Lock" show-password @keyup.enter="handleRegister" />
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            placeholder="请设置密码（6-32 位）"
+            :prefix-icon="Lock"
+            show-password
+            @keyup.enter="handleRegister"
+          />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" class="login-btn" :loading="loading" @click="handleRegister">注 册</el-button>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleRegister"
+            >注 册</el-button
+          >
         </el-form-item>
       </el-form>
     </div>
@@ -71,9 +99,9 @@
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { User, Lock, Postcard, Iphone } from '@element-plus/icons-vue'
+import { User, Lock, Postcard } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { api } from '@/api'
@@ -89,43 +117,40 @@ const loginFormRef = ref()
 const registerFormRef = ref()
 
 const loginForm = reactive({ username: '', password: '' })
-const registerForm = reactive({ username: '', nickname: '', phone: '', password: '', confirmPassword: '' })
+// 注册只要姓名、学号（登录名）、密码三项
+const registerForm = reactive({ nickname: '', username: '', password: '' })
 
 const loginRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  username: [{ required: true, message: '请输入学号', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
 const registerRules = {
+  nickname: [
+    { required: true, message: '请输入姓名', trigger: 'blur' },
+    { max: 20, message: '姓名不能超过 20 个字符', trigger: 'blur' }
+  ],
   username: [
-    { required: true, message: '请输入用户名', trigger: 'blur' },
-    { pattern: /^[a-zA-Z0-9_]{3,20}$/, message: '3-20 位字母、数字或下划线', trigger: 'blur' }
+    { required: true, message: '请输入学号', trigger: 'blur' },
+    { pattern: /^[0-9A-Za-z]{4,20}$/, message: '学号需为 4-20 位数字或字母', trigger: 'blur' }
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
     { min: 6, max: 32, message: '密码长度需为 6-32 位', trigger: 'blur' }
-  ],
-  confirmPassword: [
-    { required: true, message: '请再次输入密码', trigger: 'blur' },
-    {
-      validator: (rule, value, callback) => {
-        if (value !== registerForm.password) callback(new Error('两次输入的密码不一致'))
-        else callback()
-      },
-      trigger: 'blur'
-    }
-  ],
-  phone: [{
-    validator: (rule, value, callback) => {
-      if (!value || /^1[3-9]\d{9}$/.test(value)) callback()
-      else callback(new Error('手机号格式不正确'))
-    },
-    trigger: 'blur'
-  }]
+  ]
 }
 
 function onTabChange() {
   loginFormRef.value?.clearValidate()
+  registerFormRef.value?.clearValidate()
+}
+
+// 切到注册页并预填学号，让「该学号尚未注册」的提示可以直接接着用
+async function goRegister(username) {
+  registerForm.username = username || ''
+  registerForm.password = ''
+  activeTab.value = 'register'
+  await nextTick()
   registerFormRef.value?.clearValidate()
 }
 
@@ -140,9 +165,15 @@ async function handleLogin() {
         ElMessage.success('登录成功')
         const target = route.query.redirect || (userStore.isAdmin ? '/admin/dashboard' : '/home')
         router.replace(target)
-      } else {
-        ElMessage.error(res.message)
+        return
       }
+      // 学号未注册：提示后直接带到注册页（学号已预填）
+      if (res.code === 404) {
+        ElMessage.warning(res.message)
+        await goRegister(loginForm.username)
+        return
+      }
+      ElMessage.error(res.message)
     } catch (e) {
       ElMessage.error('登录失败，请重试')
     } finally {
@@ -158,17 +189,18 @@ async function handleRegister() {
     loading.value = true
     try {
       const res = await api.register({
-        username: registerForm.username,
-        password: registerForm.password,
-        nickname: registerForm.nickname,
-        phone: registerForm.phone
+        nickname: registerForm.nickname.trim(),
+        username: registerForm.username.trim(),
+        password: registerForm.password
       })
       if (res.code === 200) {
-        ElMessage.success('注册成功，请使用新账号登录')
-        loginForm.username = registerForm.username
+        ElMessage.success('注册成功，请使用学号登录')
+        loginForm.username = registerForm.username.trim()
         loginForm.password = ''
+        registerForm.nickname = ''
+        registerForm.username = ''
+        registerForm.password = ''
         activeTab.value = 'login'
-        registerFormRef.value.resetFields()
       } else {
         ElMessage.error(res.message)
       }
@@ -187,7 +219,7 @@ async function handleRegister() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #123A6B;
+  background-color: #123a6b;
   position: relative;
   overflow: hidden;
 
@@ -211,7 +243,7 @@ async function handleRegister() {
     inset: 0;
     background: radial-gradient(
       ellipse at 50% 50%,
-      rgba(6, 19, 37, 0.60) 0%,
+      rgba(6, 19, 37, 0.6) 0%,
       rgba(6, 19, 37, 0.48) 60%,
       rgba(6, 19, 37, 0.56) 100%
     );
@@ -232,15 +264,38 @@ async function handleRegister() {
     background: rgba(255, 255, 255, 0.08);
     animation: float 8s ease-in-out infinite;
 
-    &-1 { width: 400px; height: 400px; top: -100px; left: -100px; animation-delay: 0s; }
-    &-2 { width: 300px; height: 300px; bottom: -80px; right: -60px; animation-delay: 2s; }
-    &-3 { width: 200px; height: 200px; top: 40%; left: 60%; animation-delay: 4s; }
+    &-1 {
+      width: 400px;
+      height: 400px;
+      top: -100px;
+      left: -100px;
+      animation-delay: 0s;
+    }
+    &-2 {
+      width: 300px;
+      height: 300px;
+      bottom: -80px;
+      right: -60px;
+      animation-delay: 2s;
+    }
+    &-3 {
+      width: 200px;
+      height: 200px;
+      top: 40%;
+      left: 60%;
+      animation-delay: 4s;
+    }
   }
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0) scale(1); }
-  50% { transform: translateY(-30px) scale(1.05); }
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-30px) scale(1.05);
+  }
 }
 
 .login-card {
@@ -258,25 +313,54 @@ async function handleRegister() {
 }
 
 @keyframes cardIn {
-  from { opacity: 0; transform: translateY(30px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .login-header {
   text-align: center;
   margin-bottom: 20px;
 
-  .logo-icon { font-size: 48px; }
-  .title { font-size: 24px; font-weight: 700; color: #fff; margin: 12px 0 6px; text-shadow: 0 2px 10px rgba(0,0,0,0.3); }
-  .subtitle { font-size: 13px; color: rgba(255, 255, 255, 0.85); }
+  .logo-icon {
+    font-size: 48px;
+  }
+  .title {
+    font-size: 24px;
+    font-weight: 700;
+    color: #fff;
+    margin: 12px 0 6px;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+  }
+  .subtitle {
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.85);
+  }
 }
 
 .auth-tabs {
-  :deep(.el-tabs__header) { margin-bottom: 20px; }
-  :deep(.el-tabs__nav-wrap::after) { background-color: rgba(255, 255, 255, 0.2); }
-  :deep(.el-tabs__item) { color: rgba(255, 255, 255, 0.7); font-size: 15px; }
-  :deep(.el-tabs__item.is-active) { color: #fff; font-weight: 600; }
-  :deep(.el-tabs__active-bar) { background-color: #fff; }
+  :deep(.el-tabs__header) {
+    margin-bottom: 20px;
+  }
+  :deep(.el-tabs__nav-wrap::after) {
+    background-color: rgba(255, 255, 255, 0.2);
+  }
+  :deep(.el-tabs__item) {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 15px;
+  }
+  :deep(.el-tabs__item.is-active) {
+    color: #fff;
+    font-weight: 600;
+  }
+  :deep(.el-tabs__active-bar) {
+    background-color: #fff;
+  }
 }
 
 // 半透明输入框
@@ -285,24 +369,38 @@ async function handleRegister() {
   border: 1px solid rgba(255, 255, 255, 0.3) !important;
   box-shadow: none !important;
 
-  &:hover { background: rgba(255, 255, 255, 0.25) !important; }
-  &.is-focus { background: rgba(255, 255, 255, 0.3) !important; }
+  &:hover {
+    background: rgba(255, 255, 255, 0.25) !important;
+  }
+  &.is-focus {
+    background: rgba(255, 255, 255, 0.3) !important;
+  }
 }
 :deep(.el-input__inner) {
   color: #fff !important;
-  &::placeholder { color: rgba(255, 255, 255, 0.7) !important; }
+  &::placeholder {
+    color: rgba(255, 255, 255, 0.7) !important;
+  }
 }
-:deep(.el-input__prefix-inner), :deep(.el-input__suffix-inner) { color: rgba(255, 255, 255, 0.85) !important; }
+:deep(.el-input__prefix-inner),
+:deep(.el-input__suffix-inner) {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
 
 .login-btn {
   width: 100%;
   height: 44px;
   font-size: 16px;
   font-weight: 600;
-  background: linear-gradient(135deg, #144E9C, #2E76DB);
+  background: linear-gradient(135deg, #144e9c, #2e76db);
   border: none;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition:
+    transform 0.2s,
+    box-shadow 0.2s;
 
-  &:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(30, 98, 208, 0.5); }
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(30, 98, 208, 0.5);
+  }
 }
 </style>

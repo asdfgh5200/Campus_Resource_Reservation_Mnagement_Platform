@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 
@@ -37,9 +38,10 @@ public class CourseController {
     @GetMapping
     public Result<List<Map<String, Object>>> list(@RequestParam(required = false) Long roomId,
                                                   @RequestParam(required = false) Integer dayOfWeek,
+                                                  @RequestParam(required = false) String campus,
                                                   @RequestParam(required = false) String building) {
         UserContext.requireAdmin();
-        return Result.ok(courseService.list(roomId, dayOfWeek, building));
+        return Result.ok(courseService.list(roomId, dayOfWeek, building, campus));
     }
 
     /** 删除课表记录（管理端） */
@@ -56,5 +58,22 @@ public class CourseController {
                                                  @RequestParam(required = false)
                                                  @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate date) {
         return Result.ok(courseService.available(roomId, date));
+    }
+
+    /**
+     * 空闲教室查询：按日期 + 时段 + 校区/楼栋/教室类型/关键词筛选可选教室。
+     * 缺省时段为「当前时间向上取整到半点起 2 小时」；building 与 roomType 可重复传参或逗号分隔。
+     */
+    @GetMapping("/free-rooms")
+    public Result<List<Map<String, Object>>> freeRooms(
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate date,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm") LocalTime start,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm") LocalTime end,
+            @RequestParam(required = false) String campus,
+            @RequestParam(required = false) List<String> building,
+            @RequestParam(required = false) String floor,
+            @RequestParam(required = false) List<String> roomType,
+            @RequestParam(required = false) String keyword) {
+        return Result.ok(courseService.freeRooms(date, start, end, building, floor, campus, roomType, keyword));
     }
 }

@@ -21,10 +21,17 @@ public class CheckinController {
 
     private final CheckinService checkinService;
 
-    /** 验证码打卡 */
+    /** 验证码打卡：仅保留以兼容早期数据，用户端已统一改为定位打卡 */
     @PostMapping("/verify")
     public Result<?> verify(@RequestBody CheckinVerifyDTO dto) {
         return Result.ok(checkinService.verify(dto.getReservationId(), dto.getCode()));
+    }
+
+    /** 浏览器定位打卡。坐标只用于本次距离校验，不持久化精确位置。 */
+    @PostMapping("/location")
+    public Result<?> location(@RequestBody CheckinVerifyDTO dto) {
+        return Result.ok(checkinService.verifyLocation(
+                dto.getReservationId(), dto.getLatitude(), dto.getLongitude(), dto.getAccuracy()));
     }
 
     /** 获取资源当日验证码（管理员/资源侧） */

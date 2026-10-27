@@ -1,6 +1,7 @@
 package com.campus.reservation.service;
 
 import com.campus.reservation.ai.AiSkillLoader;
+import com.campus.reservation.ai.AiTool;
 import com.campus.reservation.ai.AiToolContext;
 import com.campus.reservation.ai.AiToolRegistry;
 import com.campus.reservation.common.BizException;
@@ -58,19 +59,31 @@ public class AiChatService {
             1) 同一时段每人只能一个预约；
             2) 实验室/体育馆最多提前 7 天，图书馆最多提前 1 天（即“明天”），教室不需预约；
             3) 开放时间内才能约：图书馆 22:00、体育馆 21:00、实验室 20:00；
-            4) 预约后 30 分钟内验证码打卡，否则爽约；1 天内违规 3 次当日禁约。
+            4) 预约开始前 30 分钟至开始后 5 分钟内，用户需在资源附近完成浏览器定位打卡；超时则爽约，1 天内违规 3 次当日禁约。
 
             【行为准则】：
             • 任何关于具体资源名称/数量/可用时段的描述，**必须先调工具查询**；不要自己编造“一共有10个座位”“6F多媒体室”这类不存在于查询结果里的信息。
             • 当用户已给出“地点类型 + 时间”（如“明天下午3–5点图书馆”），不要反复确认日期、时长、人数，直接按技能手册的标准流程走完查询到草案生成。
             • 回复时不要复述平台规则（“图书馆最多预约到次日”等已知常识），除非用户问到规则本身。
             • 若真的缺少关键信息（如完全不知道地点或时间），一次把要问的都问了，不要分多轮。
+            """
+            ;
 
+    /** 普通用户会话的权限约束：管理员能力既不下发也不允许装造 */
+    private static final String PERMISSION_USER = """
             【权限约束】：
             • 你只能调用面向当前用户权限的工具，可调用范围由系统按登录角色下发；
             • 涉及管理员专属操作（闭馆/恢复、群发通知、审批报修、查看或操作他人预约与数据等）一律拒绝，明确告知“您没有该权限，我无法代为执行”，不要尝试构造此类调用。
-            """
-            ;
+            """;
+
+    /** 管理员会话的权限约束：管理员级工具已下发，必须走工具草案而不是直接拒绝 */
+    private static final String PERMISSION_ADMIN = """
+            【权限约束（管理员会话）】：
+            • 当前登录账号是管理员，系统已下发管理员级工具（admin_*）：一键闭馆/恢复、定向闭馆、查看闭馆、撤销闭馆；
+            • 管理员要闭馆/恢复时，**不要回答“您没有该权限”**，按 admin.md 手册直接调用对应工具生成草案，由管理员在卡片上点确认后才生效；
+            • 草案只是预案，禁止声称“已经闭馆成功”，应说明“已生成草案，请在下方卡片点确认”；
+            • 系统未提供工具的管理操作（群发通知、审批报修工单、修改他人预约等）仍应引导管理员前往管理后台对应页面处理。
+            """;
 
     private static final String[] WEEKDAY_CN = {"周一", "周二", "周三", "周四", "周五", "周六", "周日"};
 
@@ -82,10 +95,10 @@ public class AiChatService {
 
     public AiChatReply chat(AiChatRequest req) {
         if (!props.ready()) {
-            throw new BizException(503, "AI 机器人未启用：请在部署环境配置 DEEPSEEK_API_KEY");
+            throw new BizException(503, "AI 助手暂未开放，请稍后再试");
         }
         if (req == null || req.getMessages() == null || req.getMessages().isEmpty()) {
-            throw BizException.badRequest("messages 不能为空");
+            throw BizException.badRequest("请先输入内容再发送");
         }
         UserContext.LoginUser current = UserContext.get();
         Long userId = UserContext.requireUserId();
@@ -145,7 +158,7 @@ public class AiChatService {
             throw be;
         } catch (Exception e) {
             log.error("AI 会话失败", e);
-            throw new BizException(502, "AI 服务调用失败：" + e.getMessage());
+            throw new BizException(502, "AI 服务暂时不可用，请稍后再试");
         }
 
         AiChatReply reply = new AiChatReply();
@@ -165,7 +178,8 @@ public class AiChatService {
                 .replace("{today}", today.toString())
                 .replace("{todayWeekday}", WEEKDAY_CN[today.getDayOfWeek().getValue() - 1])
                 .replace("{nowTime}", String.format("%02d:%02d", now.getHour(), now.getMinute()));
-        return header + "\n" + skillLoader.skillsForRole(role) + "\n" + PROMPT_TAIL;
+        return header + "\n" + skillLoader.skillsForRole(role) + "\n" + PROMPT_TAIL
+                + (role >= AiTool.ROLE_ADMIN ? PERMISSION_ADMIN : PERMISSION_USER);
     }
 
     private JsonNode callLlm(ObjectNode body) throws Exception {
@@ -179,7 +193,8 @@ public class AiChatService {
                 .build();
         HttpResponse<String> resp = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (resp.statusCode() / 100 != 2) {
-            throw new BizException(502, "LLM 返回 " + resp.statusCode() + ": " + truncate(resp.body()));
+            log.error("LLM 调用失败：HTTP {}，响应：{}", resp.statusCode(), truncate(resp.body()));
+            throw new BizException(502, "AI 服务暂时不可用，请稍后再试");
         }
         return objectMapper.readTree(resp.body());
     }

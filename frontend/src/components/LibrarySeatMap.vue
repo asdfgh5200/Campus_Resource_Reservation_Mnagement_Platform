@@ -6,7 +6,7 @@
         <span class="lg"><i class="dot free"></i>空闲可约</span>
         <span class="lg"><i class="dot mine"></i>我的预约</span>
         <span class="lg"><i class="dot taken"></i>他人占用</span>
-        <span class="lg"><i class="dot repair"></i>维修中</span>
+        <span class="lg"><i class="dot repair"></i>维修 / 报修中</span>
       </div>
       <div class="zoom-ctrl">
         <el-button size="small" :icon="ZoomOut" circle @click="zoomBy(1 / 1.25)" />
@@ -30,7 +30,14 @@
       >
         <g :transform="`translate(${tx} ${ty}) scale(${scale})`">
           <!-- 房间底图 -->
-          <rect class="floor-bg" x="6" y="6" :width="layout.width - 12" :height="layout.height - 12" rx="20" />
+          <rect
+            class="floor-bg"
+            x="6"
+            y="6"
+            :width="layout.width - 12"
+            :height="layout.height - 12"
+            rx="20"
+          />
 
           <!-- 分区框与分区标题 -->
           <g v-for="(b, bi) in layout.blocks" :key="'b' + bi">
@@ -67,7 +74,14 @@
             <rect class="screen" :x="s.size / 2 - 7" y="9" width="14" height="9" rx="1" />
             <rect class="stand" :x="s.size / 2 - 3" y="19" width="6" height="4" rx="1" />
             <!-- 座椅 -->
-            <rect class="chair" :x="s.size / 2 - 11" :y="s.size - 26" width="22" height="22" rx="7" />
+            <rect
+              class="chair"
+              :x="s.size / 2 - 11"
+              :y="s.size - 26"
+              width="22"
+              height="22"
+              rx="7"
+            />
             <!-- 占用小人 -->
             <g v-if="s.occupied" class="person">
               <circle :cx="s.size / 2" :cy="s.size - 20" r="4.4" />
@@ -83,7 +97,9 @@
             :x="s.x + s.size / 2"
             :y="s.y + s.size / 2 + 3"
             text-anchor="middle"
-          >{{ s.label }}</text>
+          >
+            {{ s.label }}
+          </text>
         </g>
       </svg>
     </div>
@@ -114,33 +130,35 @@ const resourceMap = computed(() => {
   return m
 })
 
-const seatList = computed(() => layout.value.seats.map((s) => {
-  const roomNo = seatRoomNo(props.floor, s.index)
-  const res = resourceMap.value[roomNo]
-  const occupied = !!(res && res.reserved)
-  const mine = !!(res && res.reserved && res.reservedByMe)
-  const repair = !!(res && res.status === 3)
-  let cls = 'free'
-  let tip = `座位 ${roomNo}：当前空闲，可预约`
-  if (repair) {
-    cls = 'repair'
-    tip = `座位 ${roomNo}：维修中`
-  } else if (mine) {
-    cls = 'mine'
-    tip = `座位 ${roomNo}：我的预约`
-  } else if (occupied) {
-    cls = 'taken'
-    tip = `座位 ${roomNo}：他人占用中`
-  }
-  return {
-    ...s,
-    label: String(s.index).padStart(2, '0'),
-    resource: res,
-    occupied,
-    cls,
-    tip
-  }
-}))
+const seatList = computed(() =>
+  layout.value.seats.map((s) => {
+    const roomNo = seatRoomNo(props.floor, s.index)
+    const res = resourceMap.value[roomNo]
+    const occupied = !!(res && res.reserved)
+    const mine = !!(res && res.reserved && res.reservedByMe)
+    const repair = !!(res && (res.status === 3 || res.status === 4))
+    let cls = 'free'
+    let tip = `座位 ${roomNo}：当前空闲，可预约`
+    if (repair) {
+      cls = 'repair'
+      tip = `座位 ${roomNo}：${res.status === 4 ? '报修中' : '维修中'}`
+    } else if (mine) {
+      cls = 'mine'
+      tip = `座位 ${roomNo}：我的预约`
+    } else if (occupied) {
+      cls = 'taken'
+      tip = `座位 ${roomNo}：他人占用中`
+    }
+    return {
+      ...s,
+      label: String(s.index).padStart(2, '0'),
+      resource: res,
+      occupied,
+      cls,
+      tip
+    }
+  })
+)
 
 // ---- 缩放 ----
 function zoomBy(factor) {
@@ -152,7 +170,9 @@ function zoomBy(factor) {
   ty.value = cy - (cy - ty.value) * f
   scale.value = nk
 }
-function clampScale(k) { return Math.min(3, Math.max(0.6, k)) }
+function clampScale(k) {
+  return Math.min(3, Math.max(0.6, k))
+}
 
 function onWheel(e) {
   const rect = svgRef.value.getBoundingClientRect()
@@ -206,81 +226,207 @@ function onSeatClick(s) {
 </script>
 
 <style scoped lang="scss">
-.seat-map-wrap { background: #fff; border-radius: 14px; padding: 14px 16px 10px; box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.seat-map-wrap {
+  background: #fff;
+  border-radius: 14px;
+  padding: 14px 16px 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
 
 .seat-map-toolbar {
-  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
   margin-bottom: 10px;
-  .legend { display: flex; gap: 16px; flex-wrap: wrap;
-    .lg { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #606266;
-      .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
-        &.free { background: #67c23a; }
-        &.mine { background: #409eff; }
-        &.taken { background: #f56c6c; }
-        &.repair { background: #c0c4cc; }
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    .lg {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #606266;
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        &.free {
+          background: #67c23a;
+        }
+        &.mine {
+          background: #409eff;
+        }
+        &.taken {
+          background: #f56c6c;
+        }
+        &.repair {
+          background: #c0c4cc;
+        }
       }
     }
   }
-  .zoom-ctrl { display: flex; align-items: center; gap: 8px;
-    .zoom-val { font-size: 12px; color: #909399; min-width: 40px; text-align: center; }
+  .zoom-ctrl {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    .zoom-val {
+      font-size: 12px;
+      color: #909399;
+      min-width: 40px;
+      text-align: center;
+    }
   }
 }
 
 .seat-map-canvas {
-  width: 100%; height: 600px;
+  width: 100%;
+  height: 600px;
   background: linear-gradient(180deg, #f7f9fc 0%, #eef2f8 100%);
   border-radius: 12px;
   overflow: hidden;
-  svg { width: 100%; height: 100%; cursor: grab; user-select: none;
-    &:active { cursor: grabbing; }
+  svg {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    user-select: none;
+    &:active {
+      cursor: grabbing;
+    }
   }
 }
 
-.floor-bg { fill: #ffffff; stroke: #e6ebf3; stroke-width: 2; }
+.floor-bg {
+  fill: #ffffff;
+  stroke: #e6ebf3;
+  stroke-width: 2;
+}
 
-.block-bg { fill: #f7f9fd; stroke: #e2e9f4; stroke-width: 1.5; stroke-dasharray: 7 5; }
-.block-title { font-size: 13px; font-weight: 600; fill: #7b8aa0; letter-spacing: 0.5px; }
+.block-bg {
+  fill: #f7f9fd;
+  stroke: #e2e9f4;
+  stroke-width: 1.5;
+  stroke-dasharray: 7 5;
+}
+.block-title {
+  font-size: 13px;
+  font-weight: 600;
+  fill: #7b8aa0;
+  letter-spacing: 0.5px;
+}
 
-.divider { fill: #aab9cd; }
+.divider {
+  fill: #aab9cd;
+}
 
 .seat {
   cursor: pointer;
 
-  .desk { fill: #dbe4f0; stroke: #c3cfe0; stroke-width: 1; }
-  .monitor { fill: #2c3e50; }
-  .screen { fill: #6fa8dc; }
-  .stand { fill: #9aa7b6; }
-  .chair { fill: #cbd6e4; stroke: #b4c1d2; stroke-width: 1; transition: fill 0.2s; }
+  .desk {
+    fill: #dbe4f0;
+    stroke: #c3cfe0;
+    stroke-width: 1;
+  }
+  .monitor {
+    fill: #2c3e50;
+  }
+  .screen {
+    fill: #6fa8dc;
+  }
+  .stand {
+    fill: #9aa7b6;
+  }
+  .chair {
+    fill: #cbd6e4;
+    stroke: #b4c1d2;
+    stroke-width: 1;
+    transition: fill 0.2s;
+  }
 
   &.free {
-    .desk { fill: #e3f4e5; stroke: #b7e0bd; }
-    .screen { fill: #7fc98a; }
-    .chair { fill: #d4efd8; stroke: #a9dbb1; }
-    &:hover .chair { fill: #b6e6bd; }
+    .desk {
+      fill: #e3f4e5;
+      stroke: #b7e0bd;
+    }
+    .screen {
+      fill: #7fc98a;
+    }
+    .chair {
+      fill: #d4efd8;
+      stroke: #a9dbb1;
+    }
+    &:hover .chair {
+      fill: #b6e6bd;
+    }
   }
   &.mine {
-    .desk { fill: #e2eefc; stroke: #b3d1f5; }
-    .screen { fill: #5b9bf3; }
-    .chair { fill: #cfe3fb; stroke: #9dc2f2; }
-    .person circle, .person path { fill: #409eff; }
+    .desk {
+      fill: #e2eefc;
+      stroke: #b3d1f5;
+    }
+    .screen {
+      fill: #5b9bf3;
+    }
+    .chair {
+      fill: #cfe3fb;
+      stroke: #9dc2f2;
+    }
+    .person circle,
+    .person path {
+      fill: #409eff;
+    }
   }
   &.taken {
-    .desk { fill: #fde5e5; stroke: #f5b9b9; }
-    .screen { fill: #e98080; }
-    .chair { fill: #fbdada; stroke: #f0b4b4; }
-    .person circle, .person path { fill: #f56c6c; }
+    .desk {
+      fill: #fde5e5;
+      stroke: #f5b9b9;
+    }
+    .screen {
+      fill: #e98080;
+    }
+    .chair {
+      fill: #fbdada;
+      stroke: #f0b4b4;
+    }
+    .person circle,
+    .person path {
+      fill: #f56c6c;
+    }
   }
   &.repair {
     cursor: not-allowed;
-    .desk { fill: #f0f2f5; stroke: #dcdfe6; }
-    .screen { fill: #c8ccd4; }
-    .chair { fill: #e9ebef; stroke: #dcdfe6; }
+    .desk {
+      fill: #f0f2f5;
+      stroke: #dcdfe6;
+    }
+    .screen {
+      fill: #c8ccd4;
+    }
+    .chair {
+      fill: #e9ebef;
+      stroke: #dcdfe6;
+    }
   }
 
-  &:hover { filter: drop-shadow(0 2px 6px rgba(64,158,255,0.35)); }
+  &:hover {
+    filter: drop-shadow(0 2px 6px rgba(64, 158, 255, 0.35));
+  }
 }
 
-.seat-no { font-size: 9.5px; fill: #93a1b3; pointer-events: none; }
+.seat-no {
+  font-size: 9.5px;
+  fill: #93a1b3;
+  pointer-events: none;
+}
 
-.seat-hint { margin: 8px 2px 0; font-size: 12px; color: #a8abb2; text-align: center; }
+.seat-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: #a8abb2;
+  text-align: center;
+}
 </style>

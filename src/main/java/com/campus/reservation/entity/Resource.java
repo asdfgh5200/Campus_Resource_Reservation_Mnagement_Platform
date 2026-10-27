@@ -19,9 +19,15 @@ public class Resource {
     /** 类型：1 教室、2 实验室、3 图书馆、4 体育馆 */
     private Integer resourceType;
 
+    /** 校区：马房山校区 / 南湖校区 / 余家头校区 / 军山校区 */
+    private String campus;
+
     private String building;
 
     private String floor;
+
+    /** 教室类型：多媒体教室 / 普通教室 / 机房 / 制图教室 / 学院专用 / 实验室 等 */
+    private String roomType;
 
     private String roomNo;
 
@@ -41,7 +47,16 @@ public class Resource {
     /** 单次预约时长上限（分钟） */
     private Integer maxDuration;
 
-    /** 状态：1 可预约、2 使用中、3 维修中 */
+    /** 可预约 */
+    public static final int STATUS_AVAILABLE = 1;
+    /** 使用中（管理员手动占用） */
+    public static final int STATUS_IN_USE = 2;
+    /** 维修中（报修工单已确认，正在维修） */
+    public static final int STATUS_REPAIRING = 3;
+    /** 报修中（用户已提交报修，等待管理员确认） */
+    public static final int STATUS_REPORTED = 4;
+
+    /** 状态：1 可预约、2 使用中、3 维修中、4 报修中 */
     private Integer status;
 
     private String description;

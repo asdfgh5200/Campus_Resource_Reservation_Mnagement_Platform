@@ -31,6 +31,13 @@ public class CampusClosure {
     /** 闭馆资源类型：2 实验室、3 图书馆、4 体育馆 */
     private Integer resourceType;
 
+    /** 闭馆范围：为空表示整类资源闭馆，非空表示只闭该具体资源 */
+    private Long resourceId;
+
+    /** 资源名称（非数据库字段，列表展示用） */
+    @TableField(exist = false)
+    private String resourceName;
+
     /** 闭馆日期 */
     private LocalDate closureDate;
 
