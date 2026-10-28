@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.CheckinGeofence;
+import com.campus.reservation.common.TermCalendar;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.entity.CourseSchedule;
 import com.campus.reservation.entity.Reservation;
@@ -104,29 +105,28 @@ public class ResourceService {
         return null;
     }
 
-    /** 标记教室当前是否正在上课（教室不参与预约，仅展示课表占用） */
+    /**
+     * 标记资源**当前时刻**是否正被课程占用：教室用于展示课表占用，
+     * 实验室/图书馆/体育馆同样要标红——这些资源被排课时整段不可预约，列表上不能还显示“空闲”。
+     */
     private void fillCourseBusy(List<Resource> records) {
         if (records == null || records.isEmpty()) {
             return;
         }
-        List<Long> roomIds = records.stream()
-                .filter(r -> r.getResourceType() != null && r.getResourceType() == 1)
-                .map(Resource::getId).toList();
-        if (roomIds.isEmpty()) {
-            return;
-        }
+        List<Long> roomIds = records.stream().map(Resource::getId).toList();
         LocalTime nowTime = LocalTime.now();
-        int dow = LocalDate.now().getDayOfWeek().getValue();
+        LocalDate today = LocalDate.now();
+        int dow = today.getDayOfWeek().getValue();
+        // 同一门课可能只在部分周次上课，非上课周次的同一天不能标红
+        int week = TermCalendar.weekOf(today);
         List<CourseSchedule> courses = courseScheduleMapper.selectList(Wrappers.<CourseSchedule>lambdaQuery()
                 .in(CourseSchedule::getRoomId, roomIds)
                 .eq(CourseSchedule::getDayOfWeek, dow));
         for (Resource r : records) {
-            if (r.getResourceType() == null || r.getResourceType() != 1) {
-                continue;
-            }
             r.setCourseBusy(false);
             for (CourseSchedule c : courses) {
                 if (c.getRoomId().equals(r.getId())
+                        && TermCalendar.occupies(c.getWeeks(), week)
                         && !nowTime.isBefore(c.getStartTime()) && nowTime.isBefore(c.getEndTime())) {
                     r.setCourseBusy(true);
                     r.setCourseNowName(c.getCourseName());

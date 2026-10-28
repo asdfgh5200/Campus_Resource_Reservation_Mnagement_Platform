@@ -70,6 +70,53 @@
           <el-option v-for="f in floorOptions" :key="f" :label="f" :value="f" />
         </el-select>
       </div>
+      <!-- 实验室 / 体育馆：与教室同一套可用性口径，按日期 + 时段筛出该时段真正可约的资源 -->
+      <div v-if="isSpanType" class="filter-row span-row">
+        <span class="span-label">时段</span>
+        <el-date-picker
+          v-model="spanQuery.date"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="选择日期"
+          :clearable="false"
+          :disabled-date="disabledSpanDate"
+          class="date-picker"
+          @change="onSpanChange"
+        />
+        <el-time-select
+          v-model="spanQuery.start"
+          :start="spanOpen"
+          step="00:30"
+          :end="spanLastStart"
+          placeholder="开始"
+          class="time-select"
+          @change="onSpanStartChange"
+        />
+        <span class="range-dash">至</span>
+        <el-time-select
+          v-model="spanQuery.end"
+          :start="spanQuery.start || spanOpen"
+          step="00:30"
+          :end="spanClose"
+          include-end-time
+          placeholder="结束"
+          class="time-select"
+          @change="onSpanChange"
+        />
+        <button
+          v-for="q in spanQuick"
+          :key="q.label"
+          class="quick-chip"
+          :class="{ active: spanQuery.start === q.start && spanQuery.end === q.end }"
+          @click="applySpan(q)"
+        >
+          {{ q.label }}
+        </button>
+        <span class="span-summary">
+          <b>{{ total }}</b> 间{{ isGymType ? '场地' : '实验室' }}该时段可选
+          <em>（已排除上课、已被预约、闭馆）</em>
+        </span>
+      </div>
     </el-card>
 
     <!-- 教室：校区 → 教学楼 → 教室类型 → 日期 → 时段，只列出该时段真正可选的教室 -->
@@ -243,7 +290,7 @@
           </div>
         </div>
       </div>
-      <el-empty v-if="!loading && groupedResources.length === 0" description="暂无符合条件的资源" />
+      <el-empty v-if="!loading && groupedResources.length === 0" :description="emptyText" />
     </div>
 
     <!-- 卡片模式：体育馆 -->
@@ -289,7 +336,7 @@
 
     <el-empty
       v-if="!isButtonMode && !isLibraryType && !loading && resources.length === 0"
-      description="暂无符合条件的资源"
+      :description="emptyText"
     />
 
     <!-- 分页（按钮模式按楼层分页；教室页只有空闲查询结果，不参与分页） -->
@@ -309,7 +356,7 @@
         :page-size="page.size"
         :total="total"
         layout="prev, pager, next"
-        @current-change="loadData"
+        @current-change="onPageChange"
       />
     </div>
 
@@ -592,9 +639,18 @@ function onRoomCampusChange() {
   roomQuery.roomTypes = []
 }
 
+function fmtDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function todayStr() {
+  return fmtDate(new Date())
+}
+
+function tomorrowStr() {
   const t = new Date()
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+  t.setDate(t.getDate() + 1)
+  return fmtDate(t)
 }
 
 // 仅允许查询今天及以后（历史日期无查询意义）
@@ -626,6 +682,7 @@ async function searchFreeRooms() {
   querying.value = true
   try {
     const res = await api.getFreeRooms({
+      type: 1,
       date: roomQuery.date,
       start: roomQuery.start,
       end: roomQuery.end,
@@ -643,6 +700,140 @@ async function searchFreeRooms() {
   } finally {
     querying.value = false
   }
+}
+
+// ---------- 实验室 / 体育馆：按 日期 + 时段 筛出该时段真正可约的资源 ----------
+const isSpanType = computed(() => isLabType.value || isGymType.value)
+// 可用时段取自资源真实开放时间：实验室 08:00-22:00、体育馆 09:00-21:00
+const spanOpen = computed(() => (isGymType.value ? '09:00' : '08:00'))
+const spanClose = computed(() => (isGymType.value ? '21:00' : '22:00'))
+const spanLastStart = computed(() => toHM(toMin(spanClose.value) - 30))
+const spanQuery = reactive({ date: todayStr(), start: '', end: '' })
+// 该时段可约的全部资源（服务端已排除上课、已被预约、闭馆、维修）
+const spanAll = ref([])
+const spanQuick = computed(() =>
+  isGymType.value
+    ? [
+        { label: '上午 09:00–12:00', start: '09:00', end: '12:00' },
+        { label: '下午 14:00–18:00', start: '14:00', end: '18:00' },
+        { label: '晚上 18:00–21:00', start: '18:00', end: '21:00' }
+      ]
+    : [
+        { label: '上午 08:00–12:00', start: '08:00', end: '12:00' },
+        { label: '下午 14:00–18:00', start: '14:00', end: '18:00' },
+        { label: '晚上 18:00–22:00', start: '18:00', end: '22:00' }
+      ]
+)
+
+function toMin(hm) {
+  const [h, m] = String(hm || '0:0').split(':').map(Number)
+  return h * 60 + (m || 0)
+}
+
+function toHM(min) {
+  const v = Math.max(0, Math.min(24 * 60, Math.round(min / 30) * 30))
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`
+}
+
+/** 默认时段：现在向上取整到半点起 2 小时；今天剩余时间不够就顺延到明天上午 */
+function resetSpanDefault() {
+  const openMin = toMin(spanOpen.value)
+  const closeMin = toMin(spanClose.value)
+  const now = new Date()
+  let start = Math.ceil((now.getHours() * 60 + now.getMinutes()) / 30) * 30
+  if (start + 60 > closeMin) {
+    spanQuery.date = tomorrowStr()
+    start = openMin
+  } else {
+    spanQuery.date = todayStr()
+    start = Math.max(start, openMin)
+  }
+  spanQuery.start = toHM(start)
+  spanQuery.end = toHM(Math.min(start + 120, closeMin))
+}
+
+// 实验室/体育馆仅可预约未来一周内的时间
+function disabledSpanDate(date) {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const max = new Date(today)
+  max.setDate(max.getDate() + 7)
+  return date.getTime() < today.getTime() || date.getTime() > max.getTime()
+}
+
+function onSpanChange() {
+  reloadSpan()
+}
+
+function onSpanStartChange() {
+  const closeMin = toMin(spanClose.value)
+  const start = Math.min(toMin(spanQuery.start), closeMin - 30)
+  spanQuery.start = toHM(start)
+  if (!spanQuery.end || toMin(spanQuery.end) <= start) {
+    spanQuery.end = toHM(Math.min(start + 120, closeMin))
+  }
+  reloadSpan()
+}
+
+function applySpan(q) {
+  spanQuery.start = q.start
+  spanQuery.end = q.end
+  reloadSpan()
+}
+
+function reloadSpan() {
+  page.current = 1
+  groupPage.value = 1
+  loadData()
+}
+
+// 卡片模式下分页只切本地切片，不重新请求（服务端已给全量可用列表）
+async function loadSpanResources() {
+  if (!spanQuery.start || !spanQuery.end) {
+    resetSpanDefault()
+  }
+  const closeMin = toMin(spanClose.value)
+  if (toMin(spanQuery.end) <= toMin(spanQuery.start)) {
+    spanQuery.end = toHM(Math.min(toMin(spanQuery.start) + 60, closeMin))
+  }
+  const res = await api.getFreeRooms({
+    type: Number(route.params.type),
+    date: spanQuery.date,
+    start: spanQuery.start,
+    end: spanQuery.end,
+    campus: selCampus.value || undefined,
+    buildings: selBuilding.value ? [selBuilding.value] : [],
+    roomTypes: selRoomType.value ? [selRoomType.value] : [],
+    floor: selFloor.value || undefined,
+    keyword: keyword.value.trim() || undefined
+  })
+  if (res.code === 200) {
+    spanAll.value = res.data || []
+    total.value = spanAll.value.length
+  } else {
+    spanAll.value = []
+    total.value = 0
+    ElMessage.error(res.message || '该时段查询失败')
+  }
+  applySpanPage()
+}
+
+function applySpanPage() {
+  if (isButtonMode.value) {
+    // 按钮模式按楼层分组分页，交给 pagedGroups 处理
+    resources.value = spanAll.value
+    return
+  }
+  const start = (page.current - 1) * page.size
+  resources.value = spanAll.value.slice(start, start + page.size)
+}
+
+function onPageChange() {
+  if (isSpanType.value) {
+    applySpanPage()
+    return
+  }
+  loadData()
 }
 
 // 图书馆楼层与当前楼层座位数据
@@ -723,35 +914,53 @@ function roomStatusClass(item) {
   return isUnavailable(item.status) ? 'repair' : 'occupied'
 }
 
-// 小圆点是否标红：教室看"是否正在上课"，其他资源看"是否已被预约"
+// 小圆点是否标红：上课占用与被人预约同样算占用（被排课的时段整段不可预约）
 function isDotRed(item) {
-  if (isClassroomType.value) return !!item.courseBusy
-  return !!item.reserved
+  return !!item.courseBusy || !!item.reserved
 }
+
+const emptyText = computed(() =>
+  isSpanType.value
+    ? `${spanQuery.date} ${spanQuery.start}–${spanQuery.end} 没有可用的${
+        isGymType.value ? '场地' : '实验室'
+      }，换个时间或地点试试`
+    : '暂无符合条件的资源'
+)
 
 function roomTip(item) {
   if (isUnavailable(item.status)) return unavailableText(item.status)
   if (isClassroomType.value) {
     return item.courseBusy ? `正在上课：${item.courseNowName || ''}` : '空闲，可直接使用'
   }
+  // 实验室/体育馆：列表已按所选时段筛过，展示的就是该时段可约
+  if (isSpanType.value) {
+    return `该时段（${spanQuery.start}–${spanQuery.end}）可预约`
+  }
+  // 课程占用优先：这类资源此刻约不进来
+  if (item.courseBusy) return `正在上课：${item.courseNowName || ''}，该时段不可预约`
   // 红点语义：当前时刻是否有人正在使用
   return item.reserved ? '当前正被占用' : '当前空闲，可预约'
 }
 
-// 体育馆：数量按 容量 - 当前时段已约数量 实时计算，单位取自资源自身（人/台/片）
-// 卡片模式状态标签：体育馆显示实时"剩余"信息，图书馆沿用原状态文案
+// 体育馆：数量按 容量 - 该时段已约数量 实时计算，单位取自资源自身（人/台/片）
+// remaining 由服务端按所选日期时段算出；未筛选时段时退回“当前时刻”口径
 function venueLabel(item) {
   if (Number(route.params.type) !== 4) return statusText(item.status)
   if (isUnavailable(item.status)) return unavailableText(item.status)
+  // 体育课期间整段封死，不能再按“还剩几个位”展示
+  if (item.courseBusy) return '上课中'
   const unit = item.unit || '人'
   const cap = item.capacity || 0
-  const remain = Math.max(0, cap - (item.occupiedNow || 0))
+  const remain =
+    item.remaining != null ? item.remaining : Math.max(0, cap - (item.occupiedNow || 0))
   return remain > 0 ? `剩余 ${remain} ${unit}` : '已满'
 }
 function venueTagType(item) {
   if (isUnavailable(item.status)) return 'warning'
+  if (item.courseBusy) return 'warning'
   const cap = item.capacity || 0
-  const used = item.occupiedNow || 0
+  const used =
+    item.remaining != null ? Math.max(0, cap - item.remaining) : item.occupiedNow || 0
   if (used >= cap) return 'danger'
   return used > 0 ? 'warning' : 'success'
 }
@@ -802,6 +1011,11 @@ async function loadData() {
   if (isClassroomType.value) return
   loading.value = true
   try {
+    // 实验室/体育馆：按所选日期+时段筛出真正可约的资源
+    if (isSpanType.value) {
+      await loadSpanResources()
+      return
+    }
     // 按钮模式 / 图书馆座位图：一次全加载，避免分页切断校区楼栋分组
     const size = isButtonMode.value || isLibraryType.value ? 1000 : page.size
     const res = await api.getResourcePage({
@@ -925,9 +1139,12 @@ watch(
     roomQuery.campus = ''
     roomQuery.buildings = []
     roomQuery.roomTypes = []
+    spanAll.value = []
     buildingTreeType = null
     page.current = 1
     groupPage.value = 1
+    // 实验室/体育馆的默认时段随类型变化（开放时间不同）
+    if (isSpanType.value) resetSpanDefault()
     saveLastCategory(route.params.type)
     loadData()
   }
@@ -936,6 +1153,7 @@ watch(
 onMounted(() => {
   // 记录当前分类，返回首页时弧线导航直接停在对应节点上
   saveLastCategory(route.params.type)
+  if (isSpanType.value) resetSpanDefault()
   loadData()
 })
 </script>
@@ -989,6 +1207,35 @@ onMounted(() => {
     }
     .floor-select {
       width: 140px;
+    }
+    // 实验室/体育馆的日期 + 时段筛选行
+    .span-label {
+      font-size: 13px;
+      color: #909399;
+    }
+    .date-picker {
+      width: 150px;
+    }
+    .time-select {
+      width: 110px;
+    }
+    .range-dash {
+      font-size: 13px;
+      color: #909399;
+    }
+    .span-summary {
+      margin-left: auto;
+      font-size: 13px;
+      color: #909399;
+      b {
+        margin: 0 2px;
+        font-size: 16px;
+        color: #144e9c;
+      }
+      em {
+        font-style: normal;
+        color: #c0c4cc;
+      }
     }
   }
   .info-tags {

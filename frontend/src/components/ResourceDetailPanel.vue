@@ -77,6 +77,7 @@
                 style="width: 100%"
                 @change="fetchCourses"
               />
+              <div v-if="courseWeekText" class="week-tip">{{ courseWeekText }}</div>
             </el-form-item>
             <el-form-item label="占用概览">
               <div class="course-bar-wrap">
@@ -114,6 +115,13 @@
                     <span class="ct">{{ shortTime(c.startTime) }} - {{ shortTime(c.endTime) }}</span>
                     <span class="cn">{{ c.courseName }}</span>
                     <span class="cd">{{ c.teacher || '未填教师' }}</span>
+                    <el-tooltip
+                      v-if="c.weeksLabel && c.weeksLabel !== '每周'"
+                      :content="`本课程上课周次：${c.weeksLabel}`"
+                      placement="top"
+                    >
+                      <span class="cw">仅 {{ c.weeksLabel }}</span>
+                    </el-tooltip>
                     <el-tag v-if="isCourseNow(c)" type="danger" size="small" effect="light"
                       >进行中</el-tag
                     >
@@ -145,6 +153,7 @@
                 :disabled-date="disabledDate"
                 style="width: 100%"
               />
+              <div v-if="courseWeekText" class="week-tip">{{ courseWeekText }}</div>
             </el-form-item>
             <el-form-item label="时段预览">
               <div v-if="form.date && resource" class="timeline-wrap">
@@ -165,6 +174,7 @@
                   <span><i class="dot free"></i>{{ isGym ? '有空位' : '可预约' }}</span>
                   <span v-if="isGym"><i class="dot partial"></i>部分占用</span>
                   <span><i class="dot booked"></i>{{ isGym ? '已满' : '已约' }}</span>
+                  <span v-if="dayCourses.length"><i class="dot course"></i>上课占用</span>
                   <span><i class="dot past"></i>已过</span>
                   <span v-if="hasClosureToday"><i class="dot closed"></i>闭馆</span>
                   <span class="bar-hint">点击色带选择结束时间</span>
@@ -266,6 +276,9 @@
                 </li>
                 <li v-if="resource.resourceType === 3">最多只能预约到 <b>次日</b></li>
                 <li>单次预约至少 <b>30 分钟</b>（选「现在」时结束时间会自动跳到满足 30 分钟的最早刻度）</li>
+                <li>
+                  排课占用时段<b>整段不可预约</b>（斜纹色带，体育馆同样不按容量放行），课程上完即自动释放
+                </li>
                 <li>
                   打卡时间窗：预约开始前 30 分钟 ~ 开始后 5 分钟；需到达资源所在建筑后完成定位打卡，超时未打卡将自动释放并记一次爽约
                 </li>
@@ -462,6 +475,19 @@ const blockReason = computed(() => {
 })
 
 /**
+ * 所选时段被课程占用 → 整段不可预约（与后端 findCourseConflict 同规则）：
+ * 体育馆也不按容量放行，一节体育课会占满场地，不能按“还剩下几个位”算。
+ */
+const courseReason = computed(() => {
+  const r = selRange.value
+  if (!r) return ''
+  const hit = courseRanges.value.find((c) => c.s < r.e && c.e > r.s)
+  if (!hit) return ''
+  const teacher = hit.teacher ? `（${hit.teacher}）` : ''
+  return `${toHM(hit.s)} - ${toHM(hit.e)} 正在上「${hit.name}」${teacher}，该时段不可预约`
+})
+
+/**
  * 所选时段被他人占用 → 直接置灰，不等提交后被后端拒绝：
  * 非体育馆资源同一时段只能有一个预约；体育馆按已约人数 + 本次人数是否超容量判定。
  */
@@ -490,9 +516,9 @@ const durationReason = computed(() => {
     : ''
 })
 
-/** 主按钮置灰的统一原因（时长不足、自己的预约、他人占用依次判定） */
+/** 主按钮置灰的统一原因（时长不足、课程占用、自己的预约、他人占用依次判定） */
 const disabledReason = computed(
-  () => durationReason.value || blockReason.value || occupiedReason.value
+  () => durationReason.value || courseReason.value || blockReason.value || occupiedReason.value
 )
 
 function parseHM(hm) {
@@ -513,12 +539,40 @@ function isToday(dateStr) {
   return dateStr === todayStr()
 }
 
-// ---------- 教室课表（教室不参与预约，仅展示课程占用） ----------
+// ---------- 课表占用：教室仅展示，其余类型同时作为时段不可预约的依据 ----------
 const isClassroom = computed(() => resource.value?.resourceType === 1)
 const courseDate = ref('')
 const dayCourses = ref([])
+// 当前查看日期落在第几个教学周（null = 未取到；<=0 表示不在本学期教学周内）
+const courseWeek = ref(null)
 // 当前被点击查看的占用段（null = 未展开课程明细）
 const selectedSeg = ref(null)
+
+/** 需要拉取课表的日期：教室跟随查看日期，其余资源跟随预约日期 */
+function courseDateOf() {
+  return isClassroom.value ? courseDate.value || todayStr() : form.date
+}
+
+/**
+ * 教学周提示：教务课表不是每周都上（如「8 周」），展示时只列出本周实际开课的课程，
+ * 需要说清楚当前是第几周，避免用户以为课漏爬了。
+ */
+const courseWeekText = computed(() => {
+  if (courseWeek.value === null) return ''
+  return courseWeek.value > 0
+    ? `第 ${courseWeek.value} 教学周 · 仅列出本周实际开课的课程`
+    : '该日期不在本学期教学周内，无课程占用'
+})
+
+/** 当日课程占用区间（分钟）：时段轴切分与禁选共用 */
+const courseRanges = computed(() =>
+  dayCourses.value.map((c) => ({
+    s: parseHM(shortTime(c.startTime)),
+    e: parseHM(shortTime(c.endTime)),
+    name: c.courseName,
+    teacher: c.teacher
+  }))
+)
 
 function shortTime(t) {
   return t ? String(t).slice(0, 5) : ''
@@ -528,9 +582,16 @@ async function fetchCourses() {
   if (!resource.value) return
   // 换日期后收起旧的课程明细，避免展示錯日期的课
   selectedSeg.value = null
-  const res = await api.getAvailableSlots(resource.value.id, courseDate.value || todayStr())
+  const day = courseDateOf()
+  if (!day) {
+    dayCourses.value = []
+    courseWeek.value = null
+    return
+  }
+  const res = await api.getAvailableSlots(resource.value.id, day)
   if (res.code === 200) {
     dayCourses.value = res.data.courses || []
+    courseWeek.value = res.data.week ?? null
   }
 }
 
@@ -551,11 +612,9 @@ const courseSegments = computed(() => {
   const close = parseHM(closeShort.value)
   if (close <= open) return []
   const points = new Set([open, close])
-  dayCourses.value.forEach((c) => {
-    const s = parseHM(shortTime(c.startTime))
-    const e = parseHM(shortTime(c.endTime))
-    if (s > open && s < close) points.add(s)
-    if (e > open && e < close) points.add(e)
+  courseRanges.value.forEach((c) => {
+    if (c.s > open && c.s < close) points.add(c.s)
+    if (c.e > open && c.e < close) points.add(c.e)
   })
   const arr = [...points].sort((a, b) => a - b)
   const segs = []
@@ -563,11 +622,7 @@ const courseSegments = computed(() => {
     const s = arr[i],
       e = arr[i + 1]
     if (e <= s) continue
-    const busy = dayCourses.value.some((c) => {
-      const cs = parseHM(shortTime(c.startTime))
-      const ce = parseHM(shortTime(c.endTime))
-      return cs < e && ce > s
-    })
+    const busy = courseRanges.value.some((c) => c.s < e && c.e > s)
     segs.push({
       start: s,
       end: e,
@@ -580,7 +635,7 @@ const courseSegments = computed(() => {
 })
 
 function isCourseNow(c) {
-  if (!isToday(courseDate.value)) return false
+  if (!isToday(courseDateOf())) return false
   const now = nowMin.value
   return now >= parseHM(shortTime(c.startTime)) && now < parseHM(shortTime(c.endTime))
 }
@@ -662,7 +717,7 @@ const closureWindows = computed(() => {
 })
 
 /**
- * 时段轴色带：按真实时刻切分（预约起止、当前时间、闭馆窗口），
+ * 时段轴色带：按真实时刻切分（预约起止、当前时间、闭馆窗口、课程占用），
  * 不再固定 30 分钟一格，色带宽度与持续时长严格成比例。
  */
 const timelineBands = computed(() => {
@@ -688,6 +743,11 @@ const timelineBands = computed(() => {
     addPoint(parseHM(c.startTime))
     addPoint(parseHM(c.endTime))
   })
+  // 课程占用同样参与切分：上课时段整段不可预约（体育馆也不按容量放行）
+  courseRanges.value.forEach((c) => {
+    addPoint(c.s)
+    addPoint(c.e)
+  })
 
   const bounds = [...points].sort((a, b) => a - b)
   const bands = []
@@ -697,11 +757,15 @@ const timelineBands = computed(() => {
     if (e <= s) continue
     const hit = bookedSlots.value.filter((b) => parseHM(b.start) < e && parseHM(b.end) > s)
     const closedMsg = isClosedSegment(s, e)
+    const courseHit = courseRanges.value.filter((c) => c.s < e && c.e > s)
     const occupied = hit.reduce((sum, b) => sum + (b.headcount || 1), 0)
     let state, tip
     if (closedMsg) {
       state = 'closed'
       tip = `${toHM(s)}-${toHM(e)} ${closedMsg}`
+    } else if (courseHit.length) {
+      state = 'course'
+      tip = `${toHM(s)}-${toHM(e)} 上课占用：${courseHit.map((c) => c.name).join('、')}`
     } else if (isGym.value && occupied > 0) {
       const full = occupied >= cap
       state = full ? 'booked' : 'partial'
@@ -741,6 +805,13 @@ function onBarClick(event) {
   }
   if (isClosedSegment(startMin, target)) {
     ElMessage.warning('所选时段处于闭馆期间，暂停预约')
+    return
+  }
+  const courseHit = courseRanges.value.find((c) => c.s < target && c.e > startMin)
+  if (courseHit) {
+    ElMessage.warning(
+      `${toHM(courseHit.s)} - ${toHM(courseHit.e)} 正在上「${courseHit.name}」，该时段不可预约`
+    )
     return
   }
   const conflict = bookedSlots.value.filter(
@@ -787,6 +858,8 @@ watch(
   async () => {
     if (form.date) {
       await fetchTimeline()
+      // 预约日期切换时同步拉当日课表，让上课占用段参与置灰
+      await fetchCourses()
       setDefaults()
     }
   }
@@ -948,6 +1021,7 @@ onMounted(async () => {
     courseDate.value = todayStr()
     await fetchCourses()
   }
+  // 非教室的课表由 form.date 的 watch 拉取，教室已在上面显式取过
 })
 onBeforeUnmount(() => clearInterval(nowTimer))
 </script>
@@ -1049,6 +1123,14 @@ onBeforeUnmount(() => clearInterval(nowTimer))
   color: #909399;
 }
 
+/* 教学周提示：课表只在特定周次上课，需告知当前是第几周 */
+.week-tip {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+}
+
 .submit-btn {
   width: 100%;
   background: linear-gradient(135deg, #144e9c, #2e76db);
@@ -1145,6 +1227,10 @@ onBeforeUnmount(() => clearInterval(nowTimer))
 .band.closed {
   background: repeating-linear-gradient(45deg, #bfbfbf, #bfbfbf 4px, #a8a8a8 4px, #a8a8a8 8px);
 }
+/* 上课占用：斜纹红底，与“已约”区分开，让课程与预约两种占用一眼分辨 */
+.band.course {
+  background: repeating-linear-gradient(45deg, #f56c6c, #f56c6c 4px, #c0392b 4px, #c0392b 8px);
+}
 .timeline-marks {
   display: flex;
   justify-content: space-between;
@@ -1187,6 +1273,9 @@ onBeforeUnmount(() => clearInterval(nowTimer))
   }
   .dot.closed {
     background: repeating-linear-gradient(45deg, #bfbfbf, #bfbfbf 2px, #a8a8a8 2px, #a8a8a8 4px);
+  }
+  .dot.course {
+    background: repeating-linear-gradient(45deg, #f56c6c, #f56c6c 2px, #c0392b 2px, #c0392b 4px);
   }
 }
 .timeline-empty {
@@ -1306,6 +1395,23 @@ onBeforeUnmount(() => clearInterval(nowTimer))
     }
     .cd {
       color: #909399;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    /* 课程只在部分周次上课时的提示，如「仅 8 周」「仅 1-5 周(单)、6-11 周、13 周」 */
+    .cw {
+      flex: none;
+      max-width: 160px;
+      padding: 0 6px;
+      border-radius: 4px;
+      background: #fdf6ec;
+      color: #b88230;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
   }
 }

@@ -123,9 +123,7 @@
       </el-table-column>
       <el-table-column label="当前占用" width="112">
         <template #default="{ row }">
-          <el-tag v-if="row.resourceType === 1 && row.courseBusy" type="warning" effect="light"
-            >上课中</el-tag
-          >
+          <el-tag v-if="row.courseBusy" type="warning" effect="light">上课中</el-tag>
           <el-tag v-else-if="row.reserved" type="danger" effect="light">已预约</el-tag>
           <el-tag v-else-if="row.resourceType === 1" type="info" effect="plain">空闲</el-tag>
           <el-tag v-else type="success" effect="plain">空闲</el-tag>
@@ -342,37 +340,51 @@
             </div>
 
             <p v-if="editForm.resourceType === 1" class="sec-tip">
-              教室按课表上课、不参与预约，这里只展示该教室当天的课程安排。
+              教室按课表上课、不参与预约，这里展示该教室当天的课程安排；课程只在标注的周次上课，
+              其他周次的同一时段视为空闲。
             </p>
             <p v-else class="sec-tip">
               当天共 {{ bookings.length }} 条预约，其中进行中
               {{ activeCount }} 条；红点表示当前时刻正被占用。
             </p>
 
-            <div v-if="editForm.resourceType === 1" v-loading="courseLoading" class="booking-box">
+            <p v-if="editForm.resourceType === 1 || roomCourses.length" class="list-hd">
+              课程占用（该时段不可预约）
+            </p>
+            <div
+              v-if="editForm.resourceType === 1 || roomCourses.length"
+              v-loading="courseLoading"
+              class="booking-box"
+            >
               <p v-if="!roomCourses.length" class="booking-empty">这一天没有排课</p>
               <ul v-else class="booking-list">
                 <li v-for="c in roomCourses" :key="c.id">
                   <span class="bk-time">{{ short(c.startTime) }} - {{ short(c.endTime) }}</span>
                   <span class="bk-user">{{ c.courseName }}</span>
                   <span class="bk-meta">{{ c.teacher || '—' }}</span>
+                  <span v-if="c.weeksLabel && c.weeksLabel !== '每周'" class="bk-meta"
+                    >仅 {{ c.weeksLabel }}</span
+                  >
                 </li>
               </ul>
             </div>
 
-            <div v-else v-loading="bookingLoading" class="booking-box">
-              <p v-if="!bookings.length" class="booking-empty">这一天还没有人预约</p>
-              <ul v-else class="booking-list">
-                <li v-for="b in bookings" :key="b.id">
-                  <span class="bk-time">{{ clock(b.startTime) }} - {{ clock(b.endTime) }}</span>
-                  <span class="bk-user">{{ userName(b) }}</span>
-                  <span class="bk-meta">{{ b.remark || '—' }}</span>
-                  <el-tag size="small" :type="resStatusType(b.status)">{{
-                    resStatusText(b.status)
-                  }}</el-tag>
-                </li>
-              </ul>
-            </div>
+            <template v-if="editForm.resourceType !== 1">
+              <p class="list-hd">当日预约</p>
+              <div v-loading="bookingLoading" class="booking-box">
+                <p v-if="!bookings.length" class="booking-empty">这一天还没有人预约</p>
+                <ul v-else class="booking-list">
+                  <li v-for="b in bookings" :key="b.id">
+                    <span class="bk-time">{{ clock(b.startTime) }} - {{ clock(b.endTime) }}</span>
+                    <span class="bk-user">{{ userName(b) }}</span>
+                    <span class="bk-meta">{{ b.remark || '—' }}</span>
+                    <el-tag size="small" :type="resStatusType(b.status)">{{
+                      resStatusText(b.status)
+                    }}</el-tag>
+                  </li>
+                </ul>
+              </div>
+            </template>
           </section>
         </div>
 
@@ -687,11 +699,9 @@ const editForm = reactive(emptyForm())
 
 const occupancy = computed(() => {
   if (!editForm.id) return { text: '', type: 'info' }
-  if (editForm.resourceType === 1) {
-    return flags.courseBusy
-      ? { text: '正在上课', type: 'warning' }
-      : { text: '课表空闲', type: 'success' }
-  }
+  // 课程占用优先：实验室/体育馆被排课时同样整段不可预约
+  if (flags.courseBusy) return { text: '正在上课', type: 'warning' }
+  if (editForm.resourceType === 1) return { text: '课表空闲', type: 'success' }
   return flags.reserved
     ? { text: '当前有预约', type: 'danger' }
     : { text: '当前空闲', type: 'success' }
@@ -760,7 +770,8 @@ async function reloadOccupancy() {
     await loadRoomCourses()
     return
   }
-  await loadBookings()
+  // 非教室也要看课表：排课覆盖的时段整段不可预约，管理员得知道用户为什么约不进来
+  await Promise.all([loadRoomCourses(), loadBookings()])
 }
 
 async function loadBookings() {
@@ -990,6 +1001,14 @@ defineExpose({ applyFilters, reload: loadData, loadAll })
   margin: -4px 0 10px;
   font-size: 12px;
   color: #8a94a6;
+}
+
+/* 课表与预约两张列表同时出现时，靠小标题区分 */
+.list-hd {
+  margin: 6px 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5b6779;
 }
 
 .dw-form {

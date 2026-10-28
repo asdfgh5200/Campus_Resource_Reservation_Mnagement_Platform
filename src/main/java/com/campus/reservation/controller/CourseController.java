@@ -3,6 +3,7 @@ package com.campus.reservation.controller;
 import com.campus.reservation.common.Result;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.CourseImportDTO;
+import com.campus.reservation.service.AvailabilityService;
 import com.campus.reservation.service.CourseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -26,6 +27,7 @@ import java.util.Map;
 public class CourseController {
 
     private final CourseService courseService;
+    private final AvailabilityService availabilityService;
 
     /** 导入课表（JSON 数组），单条填写也走此接口 */
     @PostMapping("/import")
@@ -61,11 +63,13 @@ public class CourseController {
     }
 
     /**
-     * 空闲教室查询：按日期 + 时段 + 校区/楼栋/教室类型/关键词筛选可选教室。
+     * 空闲资源查询：按日期 + 时段 + 类型 + 校区/楼栋/细分类型/关键词筛选真正可用的资源。
+     * type 缺省 1（教室）；实验室/体育馆也走这个接口（同一套可用性口径），体育馆额外返回 remaining（剩余数量）。
      * 缺省时段为「当前时间向上取整到半点起 2 小时」；building 与 roomType 可重复传参或逗号分隔。
      */
     @GetMapping("/free-rooms")
     public Result<List<Map<String, Object>>> freeRooms(
+            @RequestParam(required = false) Integer type,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate date,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm") LocalTime start,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm") LocalTime end,
@@ -74,6 +78,6 @@ public class CourseController {
             @RequestParam(required = false) String floor,
             @RequestParam(required = false) List<String> roomType,
             @RequestParam(required = false) String keyword) {
-        return Result.ok(courseService.freeRooms(date, start, end, building, floor, campus, roomType, keyword));
+        return Result.ok(availabilityService.freeResources(date, start, end, type, campus, building, roomType, floor, keyword));
     }
 }

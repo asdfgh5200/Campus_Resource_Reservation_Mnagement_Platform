@@ -330,17 +330,16 @@ const durationText = computed(() => {
   return m ? `${h} 小时 ${m} 分钟` : `${h} 小时`
 })
 
-/** 打卡时间相对预约开始：提前几分钟 / 迟到几分钟；管理员补签不受时间窗限制 */
+/** 打卡时间相对预约开始：提前几分钟 / 迟到几分钟；管理员补签同样受打卡时间窗约束 */
 const checkinOffsetText = computed(() => {
   const r = reservation.value
   if (!r || r.checkinFlag !== 1) return '—'
-  if (r.checkinType === 3) return '管理员补签（不受打卡时间窗限制）'
   const start = parseDt(r.startTime)
   const checkin = parseDt(r.checkinTime)
-  if (!start || !checkin) return '—'
+  if (!start || !checkin) return r.checkinType === 3 ? '管理员代为打卡' : '—'
   const diff = Math.round((checkin - start) / 60000)
-  if (diff === 0) return '准点打卡'
-  return diff < 0 ? `提前 ${-diff} 分钟` : `迟 ${diff} 分钟`
+  const suffix = diff === 0 ? '准点打卡' : diff < 0 ? `提前 ${-diff} 分钟` : `迟 ${diff} 分钟`
+  return r.checkinType === 3 ? `管理员代为打卡（${suffix}）` : suffix
 })
 
 /** 关键节点：取消 / 完成 / 爽约 / 管理员调整，直接从时间线里取，保证与留痕一致 */

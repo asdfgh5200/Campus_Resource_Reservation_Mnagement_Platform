@@ -109,7 +109,7 @@
 >
 > `occupiedNow`：**仅体育馆**返回，该场馆当前时段已约数量（剩余 = `capacity - occupiedNow`）。
 >
-> `courseBusy` / `courseNowName`：**仅教室**返回，当前是否正在上课及课程名。
+> `courseBusy` / `courseNowName`：**全类型资源**返回，当前是否正被课程占用及课程名。教室仅用于展示；实验室/图书馆/体育馆被排课的时段整段不可预约，列表圆点同样标红。
 >
 > `campus`：资源所属校区，取自教务系统真实校区，供前端按校区/楼栋/细分类型三级筛选。
 >
@@ -204,6 +204,22 @@
 
 - **PUT** `/api/users/me`
 
+### 3.5 管理端：用户资料与数值维护 ✅
+
+- **GET** `/api/admin/users?keyword=&current=&size&`：普通用户分页（不含管理员账号），可按学号/姓名搜索
+- **GET** `/api/admin/users/{id}?startDate=&endDate=`：用户详情（资料 + 统计 + 预约/违规/留言记录，可按日筛选）
+- **POST** `/api/admin/users/{id}/notify`：向该用户推送站内通知
+- **PUT** `/api/admin/users/{id}`：修改资料与数值，请求体按需传字段：
+  - `username`（学号/登录名）：管理员可改，需 4-20 位数字或字母且未被其他账号占用（`uk_username` 唯一），否则 `400`/`409`
+  - `password`：仅在传非空值时**重置**，服务端按注册同一套 BCrypt 加密后落库；长度 6-32 位否则 `400`。密码不回显（`@JsonIgnore`），列表/详情/编辑均不返回明文
+  - `nickname` `phone` `email` `status` `cancelCount` `reservationTotal` `todayViolations` `totalViolations` `restrictOverride`
+- **账号权限（下拉四态，分维度独立）**：前端用一个下拉聚合，后端仍落 `status` / `restrictOverride` / `cancelCount` 三个既有字段，不新增列：
+  - **正常**：`status=1`、`restrictOverride=1`、`cancelCount` 低于上限 → 可预约、可取消
+  - **违规**：`status=1`、`restrictOverride=2`（强制受限）→ 禁止新建预约，仍可取消
+  - **禁止取消**：`status=1`、`restrictOverride=1`、`cancelCount` 置为上限 5 → 可预约，但非管理员不可自行取消（复用 `4.3` 的取消拦截）
+  - **禁用账号**：`status=0` → 停用登录
+  - 读取时按优先级 **禁用 > 违规 > 禁止取消 > 正常** 归并为一个下拉值
+
 ---
 
 ## 4. 预约模块（核心引擎）
@@ -222,11 +238,13 @@
 }
 ```
 
-- 服务端校验：资源开放时间、**单次时长下限 30 分钟**（不设上限）、信用分、**时间冲突**
+- 服务端校验：资源开放时间、**单次时长下限 30 分钟**（不设上限）、信用分、**课表占用**、**时间冲突**
 - 时长不足 30 分钟返回 `400`（提示“单次预约时长不能少于 30 分钟”）；结束时间不得早于/等于开始时间
 - `headcount`：使用数量，**仅体育馆（`resourceType=4`）生效**，其他资源忽略（固定 1）
-- 冲突规则：
-  - **体育馆**：允许多人同时预约，同一时段所有有效预约的 `headcount` 之和 + 本次不得超过场馆 `capacity`，超出返回 `code: 409`
+- 冲突规则（判定先后顺序：课表占用 → 预约冲突）：
+  - **课表占用**：所选时段与 `course_schedule` 中该资源的排课半开重叠（`courseStart < end AND courseEnd > start`）时拒绝，返回 `code: 409`（提示「该时段「XXX」正在上课（HH:mm ~ HH:mm），暂不可预约」）。**实验室/图书馆/体育馆与教室同规则**；体育馆也整段封死，不做容量扣减——一节课会占满场地并搬动器材，按人数放行会打扰正常教学
+  - **按教学周判定**：只有该日期所在教学周真正开课的课程才算占用；非上课周次的同一时段视为空闲（同一门课可能只在第 1-8 周、或只在单周上课）
+  - **体育馆**：课表未占用时允许多人同时预约，同一时段所有有效预约的 `headcount` 之和 + 本次不得超过场馆 `capacity`，超出返回 `code: 409`
   - **其他资源**：任何时段重叠都拒绝（`code: 409`）
 
 ### 4.2 我的预约（分页）📝
@@ -292,6 +310,19 @@
 - 需管理员权限；`action`：`1` 创建预约、`2` 取消预约、`3` 打卡、`4` 爽约、`5` 完成、`6` 提前释放、`9` 删除记录、`10` 管理员调整（`7`/`8` 为已下线的暂离，仅历史数据）
 - 记录创建/取消/打卡等操作，用于管理端追溯用户操作
 
+### 4.10 管理端：直接调整预约状态 ✅
+
+- **PUT** `/api/admin/reservations/{id}/status`
+- 请求体：`{ "status": 2 }`（`1` 待打卡、`2` 使用中、`3` 已结束、`4` 已取消、`5` 爽约、`6` 违规）
+- 需管理员权限；改为「使用中」视为管理员代为打卡，补写打卡标记与时间（`checkinType=3`），每次调整写入操作日志（`action=10`）并记在当前管理员名下
+- **管理员调整同样遵守打卡时间窗（开始前 30 分钟 ~ 开始后 5 分钟），违反返回 `400`：**
+  - 未到打卡窗口不能改为「使用中」（提示可在开始前 30 分钟内代为打卡）
+  - 已超过打卡时限且未打卡，不能改为「使用中」或退回「待打卡」，只能改判「已结束」或「违规」
+  - 已完成打卡的记录不可退回「待打卡」（打卡记录已产生）
+  - 时段已结束（`endTime` 早于当前）的记录只能在「已结束」与「违规」之间调整，不允许回退为进行态
+- 调整前会先执行一次懒惰结算（`refreshStatuses`），保证库里状态与当前时刻一致后再校验流转
+- 前端「预约管理」与「用户管理 → 预约记录」的状态下拉按同一套规则动态收敛可选项，与服务端校验保持一致
+
 ---
 
 ## 5. 打卡核验模块
@@ -355,40 +386,57 @@
 
 ## 7. 教室 + 课表模块
 
-> **教室（`resourceType=1`）不参与预约**：未被课程占用时用户可直接进入使用，系统只负责展示课表占用情况。
-> 用户端教室列表的红点表示"当前正在上课"，点击进入详情查看课表；调用 `POST /api/reservations` 预约教室会返回 `400`。
+> **教室（`resourceType=1`）不参与预约**：未被课程占用时用户可直接进入使用，系统只负责展示课表占用情况；调用 `POST /api/reservations` 预约教室会返回 `400`。
+> **实验室/图书馆/体育馆（`2/3/4`）可预约，但被排课覆盖的时段整段不可预约**（后端 `409` + 前端时段条置灰），课表对这四类资源是同一套占用规则。
+> 用户端列表的红点表示"当前正被上课或被人占用"，点击进入详情查看当日时段条。
+>
+> **课表按教学周生效**：每条课表带 30 位周次位图 `weeks`（左起第 n 位为 `1` 表示第 n 周上课，空值视为每周），学期共 30 周、第 1 周周一为 `2026-09-07`（校历 `2026-2027-1`）。判断教室占用、空闲教室、可预约性时都会先换算「该日期属于第几教学周」，再判断「这门课这周上不上」；非上课周次一律按空闲处理。
 
 ### 7.1 导入课表（管理端）✅
 
 - **POST** `/api/courses/import`
 - 需管理员权限；请求体为 JSON 数组，单条手动填写也走此接口
-- 格式：`[{ "roomId", "courseName", "dayOfWeek", "startTime", "endTime", "teacher", "term" }]`
+- 格式：`[{ "roomId", "courseName", "dayOfWeek", "startTime", "endTime", "teacher", "term", "weeks" }]`
 - `dayOfWeek`：`1~7`（周一~周日）；`startTime/endTime`：`HH:mm:ss`
+- `weeks`：可选，30 位周次位图（如 `101011111110100000000000000000`）；缺省或空串视为每周上课
+- 返回本次导入的记录条数；同一教室 + 课程名 + 星期 + 起止时间视为同一门课，重复导入只更新 `teacher` 与 `weeks`
 
 ### 7.2 课表列表（管理端）✅
 
 - **GET** `/api/courses?roomId=&dayOfWeek=&campus=&building=`
 - 需管理员权限；返回含教室名称/校区/楼栋/楼层的课表记录列表
+- 每条额外返回 `weeks`（30 位位图原值）与 `weeksLabel`（人话周次，口径与教务一致：`1-16 周`、`8 周、11-15 周(单)`、`2-16 周(双)`，空位图为 `每周`）
 
 ### 7.3 删除课表记录（管理端）✅
 
 - **DELETE** `/api/courses/{id}`
 - 需管理员权限
 
-### 7.4 查询教室当日课表与空闲时段 ✅
+### 7.4 查询资源当日课表与空闲时段 ✅
 
 - **GET** `/api/courses/available?roomId=&date=`
-- 依据课表排除课程占用时段，返回当日课程列表与空闲时段（供用户端条形图展示）
+- 依据课表排除课程占用时段，返回当日课程列表与空闲时段（供用户端条形图、时段条置灰展示）
+- 教室传查看日期，其余资源传预约日期；接口本身不限资源类型，`roomId` 也可以是实验室/体育馆
+- **按教学周过滤**：只返回该日期所在教学周真正开课的课程，非上课周次不计占用
+- 响应 `data`：`{ roomId, roomName, date, openTime, closeTime, week, totalWeeks, courses, freeSlots }`
+  - `week`：该日期所在教学周序号（1~30，不在本学期为 `null`）；`totalWeeks`：学期总周数（`30`）
+  - `courses[]` 每项：`id / courseName / teacher / startTime / endTime / weeks / weeksLabel / week`
+  - `freeSlots[]` 每项：`start / end`（`HH:mm:ss`）
+- 例：`/api/courses/available?roomId=1595&date=2026-10-28` → `week: 8`，`courses: [{ "courseName": "软件需求工程B", "teacher": "彭静", "startTime": "10:45:00", "endTime": "13:55:00", "weeksLabel": "8 周" }]`；同一教室换成 `date=2026-11-04`（第 9 周）返回 `courses: []`
 
-### 7.5 空闲教室查询（用户端）✅
+### 7.5 空闲资源查询（用户端）✅
 
-- **GET** `/api/courses/free-rooms?date=&start=&end=&campus=&building=&roomType=&floor=&keyword=`
+- **GET** `/api/courses/free-rooms?type=&date=&start=&end=&campus=&building=&roomType=&floor=&keyword=`
+- `type`：`1` 教室（缺省）/ `2` 实验室 / `3` 图书馆 / `4` 体育馆；四类共用同一个可用性判定（`AvailabilityService`）
 - `date`：`yyyy-MM-dd`，缺省今天；`start/end`：`HH:mm`，缺省为当前时间向上取整到半点起 2 小时
-- `campus`：校区筛选，缺省不限；`building` / `roomType`：楼栋与教室类型，均可逗号分隔传多个
+- `campus`：校区筛选，缺省不限；`building` / `roomType`：楼栋与细分类型（教室类型/实验方向/运动类型），均可逗号分隔传多个
 - `keyword`：按房间号或名称模糊搜索（如 `101`、`博学`），缺省不搜索
-- 只返回**完整覆盖所选时段**、且未被课程与预约占用、非维修中的教室
-- 响应 `data` 为数组，每项含 `id / name / campus / building / floor / roomType / roomNo / capacity / freeUntil`
-- 前端标准调用顺序：搜索框（教室号/名称） → 校区 → 教学楼 → 教室类型 → 日期 → 时段
+- 只返回**完整覆盖所选时段**、且满足全部条件的资源：非维修中/报修中、在开放时间内、未命中闭馆与节假日、未被该教学周真正开课的课程占用、未被进行中的预约占满
+- 课程占用按教学周判断：那周不上课就不算占用，因此同一资源在不同周次的空闲结果可能不同
+- 体育馆按容量累加：`remaining = capacity - 该时段已约 headcount 之和`，剩余为 0 时不返回；其余资源时段独占，可用即 `remaining = 1`
+- 响应 `data` 为数组，每项含 `id / name / resourceType / campus / building / floor / roomType / roomNo / capacity / unit / openTime / closeTime / remaining / freeUntil`
+- 日期范围：实验室、体育馆最多提前 7 天，图书馆最多到次日，教室不限；超出返回 `400`；整站闭馆或命中节假日时同样返回 `400` 并带原因提示（不再返回空数组）
+- 前端标准调用顺序：搜索框 → 校区 → 楼栋/运动场 → 类型 → 日期 → 时段；实验室与体育馆页面的列表本身就是该时段可约资源的筛选结果
 
 ---
 
@@ -506,6 +554,7 @@
 - 请求体：`{ "messages": [{ "role": "user", "content": "明天下午有空位的图书馆吗" }] }`
 - 返回：`{ "content": "...", "pendingActions": [{ "kind", "payload" }], "assistantEcho": {...} }`
 - `pendingActions` 是待确认草案，`kind` 取值：`create_reservation` / `cancel_reservation` / `campus_closure` / `create_closure` / `revoke_closure`，前端确认后才调用对应业务接口
+- **草案不会落在被占用的时段上**：`propose_reservation` 生成前先调 `AvailabilityService.check` 做一次真实可用性判定，命中上课/他人预约/闭馆/超出开放时间时返回 `status: blocked` 且不产出草案，模型必须换时段重试
 - 未配置 `DEEPSEEK_API_KEY` 时返回 `503`；工具循环上限 `deepseek.max-tool-loops`
 - 工具清单与权限模型见《AI机器人Skill说明.md》
 

@@ -6,9 +6,6 @@
         <div class="tb-left">
           <el-icon :size="18" color="#2e76db"><Files /></el-icon>
           <span class="tb-title">资源档案</span>
-          <span class="tb-hint"
-            >按校区 / 楼栋 / 类型逐级筛选，点任意一行查看全部信息并直接修改</span
-          >
         </div>
         <div class="tb-right">
           <el-button :icon="Tools" @click="repairVisible = true">报修与维护</el-button>
@@ -89,10 +86,6 @@ onMounted(async () => {
     font-size: 14px;
     font-weight: 600;
     color: #1f2d3d;
-  }
-  .tb-hint {
-    font-size: 12px;
-    color: #8a94a6;
   }
   .tb-right {
     display: flex;

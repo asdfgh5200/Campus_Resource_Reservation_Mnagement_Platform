@@ -4,11 +4,13 @@ import com.campus.reservation.common.BizException;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ReservationDTO;
 import com.campus.reservation.dto.ReservationTraceVO;
+import com.campus.reservation.entity.CourseSchedule;
 import com.campus.reservation.entity.Reservation;
 import com.campus.reservation.entity.ReservationLog;
 import com.campus.reservation.entity.Resource;
 import com.campus.reservation.entity.SysUser;
 import com.campus.reservation.entity.Violation;
+import com.campus.reservation.mapper.CourseScheduleMapper;
 import com.campus.reservation.mapper.HolidayMapper;
 import com.campus.reservation.mapper.ReservationMapper;
 import com.campus.reservation.mapper.ResourceMapper;
@@ -45,6 +47,8 @@ class ReservationServiceTest {
     private ReservationMapper reservationMapper;
     @Mock
     private ResourceMapper resourceMapper;
+    @Mock
+    private CourseScheduleMapper courseScheduleMapper;
     @Mock
     private SysUserMapper userMapper;
     @Mock
@@ -99,6 +103,16 @@ class ReservationServiceTest {
         dto.setEndTime(start.plusHours(1));
         dto.setHeadcount(1);
         return dto;
+    }
+
+    /** 课表占用：星期由查询条件决定，单测里 mock 掉查询，只需给时刻 */
+    private CourseSchedule course(String name, LocalTime start, LocalTime end) {
+        CourseSchedule c = new CourseSchedule();
+        c.setRoomId(1L);
+        c.setCourseName(name);
+        c.setStartTime(start);
+        c.setEndTime(end);
+        return c;
     }
 
     // ---------------- create：核心业务规则 ----------------
@@ -258,6 +272,58 @@ class ReservationServiceTest {
         assertThatThrownBy(() -> service.create(dto))
                 .isInstanceOf(BizException.class)
                 .hasFieldOrPropertyWithValue("code", 409);
+    }
+
+    @Test
+    @DisplayName("create：实验室时段被课程占用 → 409")
+    void create_courseOccupiedLab_conflict() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(2, 1));
+        when(holidayMapper.selectCount(any())).thenReturn(0L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(courseScheduleMapper.selectList(any())).thenReturn(
+                List.of(course("软件工程基础实验", LocalTime.of(9, 0), LocalTime.of(12, 0))));
+
+        assertThatThrownBy(() -> service.create(validDto()))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 409)
+                .hasMessageContaining("软件工程基础实验");
+        // 被课程拦下后不应落库
+        verify(reservationMapper, never()).insert(any(Reservation.class));
+    }
+
+    @Test
+    @DisplayName("create：体育馆被体育课占用 → 整段封死 409（不按容量放行）")
+    void create_courseOccupiedGym_conflict() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(4, 1));
+        when(holidayMapper.selectCount(any())).thenReturn(0L);
+        when(courseScheduleMapper.selectList(any())).thenReturn(
+                List.of(course("体育（篮球）", LocalTime.of(10, 30), LocalTime.of(12, 0))));
+
+        assertThatThrownBy(() -> service.create(validDto()))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 409)
+                .hasMessageContaining("体育（篮球）");
+    }
+
+    @Test
+    @DisplayName("create：课程紧贴所选时段两端（半开区间）→ 不冲突，预约成功")
+    void create_courseAdjacent_notConflict() {
+        UserContext.set(1L, 0);
+        when(userMapper.selectById(1L)).thenReturn(validUser());
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(2, 1));
+        when(holidayMapper.selectCount(any())).thenReturn(0L);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        // 10:00 下课与 11:00 上课，刚好落在预约时段 [10:00, 11:00) 的两个边界上
+        when(courseScheduleMapper.selectList(any())).thenReturn(List.of(
+                course("高等数学A上", LocalTime.of(8, 0), LocalTime.of(10, 0)),
+                course("大学英语", LocalTime.of(11, 0), LocalTime.of(12, 35))));
+
+        Reservation r = service.create(validDto());
+        assertThat(r.getStatus()).isEqualTo(Reservation.STATUS_PENDING);
     }
 
     @Test
@@ -568,6 +634,113 @@ class ReservationServiceTest {
         log.setAction(action);
         log.setReservationId(7L);
         return log;
+    }
+
+    // ---------------- adminUpdateStatus：管理员调整状态同样遵守打卡时间窗 ----------------
+
+    private Reservation adminReservation(int status, LocalDateTime start, LocalDateTime end, int checkinFlag) {
+        Reservation r = new Reservation();
+        r.setId(1L);
+        r.setUserId(1L);
+        r.setResourceId(1L);
+        r.setStatus(status);
+        r.setStartTime(start);
+        r.setEndTime(end);
+        r.setCheckinFlag(checkinFlag);
+        return r;
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：未到打卡窗口改为使用中 → 400")
+    void adminUpdateStatus_beforeWindow_toInUseRejected() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_PENDING,
+                LocalDateTime.now().plusHours(2), LocalDateTime.now().plusHours(3), 0);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+
+        assertThatThrownBy(() -> service.adminUpdateStatus(1L, Reservation.STATUS_IN_USE))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：超过打卡时限未打卡改为使用中 → 400")
+    void adminUpdateStatus_latePassed_toInUseRejected() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_PENDING,
+                LocalDateTime.now().minusMinutes(60), LocalDateTime.now().plusHours(1), 0);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+
+        assertThatThrownBy(() -> service.adminUpdateStatus(1L, Reservation.STATUS_IN_USE))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：已打卡记录退回待打卡 → 400")
+    void adminUpdateStatus_alreadyCheckedIn_toPendingRejected() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_IN_USE,
+                LocalDateTime.now().minusMinutes(1), LocalDateTime.now().plusHours(1), 1);
+        r.setCheckinTime(LocalDateTime.now());
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+
+        assertThatThrownBy(() -> service.adminUpdateStatus(1L, Reservation.STATUS_PENDING))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：时段已结束回退为使用中 → 400")
+    void adminUpdateStatus_endedBackToActiveRejected() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_IN_USE,
+                LocalDateTime.now().minusHours(2), LocalDateTime.now().minusHours(1), 1);
+        r.setCheckinTime(LocalDateTime.now().minusHours(2));
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+
+        assertThatThrownBy(() -> service.adminUpdateStatus(1L, Reservation.STATUS_PENDING))
+                .isInstanceOf(BizException.class)
+                .hasFieldOrPropertyWithValue("code", 400);
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：窗口内代为打卡改为使用中 → 成功并补打卡标记")
+    void adminUpdateStatus_withinWindow_toInUseSuccess() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_PENDING,
+                LocalDateTime.now().minusMinutes(1), LocalDateTime.now().plusHours(1), 0);
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+        when(resourceMapper.selectBatchIds(any())).thenReturn(List.of(openResource(3, 1)));
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+
+        Reservation result = service.adminUpdateStatus(1L, Reservation.STATUS_IN_USE);
+
+        assertThat(result.getStatus()).isEqualTo(Reservation.STATUS_IN_USE);
+        assertThat(result.getCheckinFlag()).isEqualTo(1);
+        assertThat(result.getCheckinType()).isEqualTo(Reservation.CHECKIN_TYPE_ADMIN);
+    }
+
+    @Test
+    @DisplayName("adminUpdateStatus：时段已结束改为违规 → 成功")
+    void adminUpdateStatus_endedToViolatedSuccess() {
+        UserContext.set(99L, 1);
+        Reservation r = adminReservation(Reservation.STATUS_COMPLETED,
+                LocalDateTime.now().minusHours(2), LocalDateTime.now().minusHours(1), 1);
+        r.setCheckinTime(LocalDateTime.now().minusHours(2));
+        when(reservationMapper.selectList(any())).thenReturn(List.of());
+        when(reservationMapper.selectById(1L)).thenReturn(r);
+        when(resourceMapper.selectBatchIds(any())).thenReturn(List.of(openResource(3, 1)));
+        when(resourceMapper.selectById(1L)).thenReturn(openResource(3, 1));
+
+        Reservation result = service.adminUpdateStatus(1L, Reservation.STATUS_VIOLATED);
+
+        assertThat(result.getStatus()).isEqualTo(Reservation.STATUS_VIOLATED);
     }
 
     @Test

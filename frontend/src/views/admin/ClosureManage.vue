@@ -5,9 +5,14 @@
       <template #header>
         <div class="hd">
           <span>总体一键闭馆</span>
-          <span class="hd-hint"
-            >应对节假日/突发情况，闭馆期间普通用户不可新建预约，管理员不受限</span
-          >
+          <el-popover placement="bottom-end" :width="340" trigger="hover">
+            <template #reference>
+              <el-button class="rule-btn" :icon="InfoFilled" circle size="small" />
+            </template>
+            <div class="rule-pop">
+              <p>应对节假日/突发情况，闭馆期间普通用户不可新建预约，管理员不受限。</p>
+            </div>
+          </el-popover>
         </div>
       </template>
       <div class="campus-bar">
@@ -40,7 +45,6 @@
         <div class="hd">
           <div class="hd-left">
             <span class="hd-title">定向闭馆</span>
-            <span class="hd-hint">可整类闭馆，也可只闭某个资源（如某个球馆 / 某间实验室）</span>
           </div>
           <el-button type="primary" @click="openAdd">新增闭馆</el-button>
         </div>
@@ -174,7 +178,7 @@
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { WarnTriangleFilled, CircleCheckFilled } from '@element-plus/icons-vue'
+import { WarnTriangleFilled, CircleCheckFilled, InfoFilled } from '@element-plus/icons-vue'
 import api from '@/api'
 
 defineProps({
@@ -403,9 +407,9 @@ onUnmounted(() => {
   font-weight: 600;
   color: #1f2d3d;
 }
-.hd-hint {
-  font-size: 12px;
+.rule-btn {
   color: #909399;
+  border-color: #dcdfe6;
 }
 .scope-one {
   font-weight: 500;

@@ -17,11 +17,15 @@
           <el-button :icon="Refresh" @click="loadData">刷新</el-button>
         </div>
         <div class="toolbar-right">
-          <span class="rule-tip"
-            >规则：一天内违规满 {{ limit }} 次当日禁止预约，次日恢复；累计取消满
-            {{ cancelLimit }}
-            次记恶意取消，该用户之后不可再取消预约（在用户详情里把取消次数调低即可恢复）</span
-          >
+          <el-popover placement="bottom-end" :width="340" trigger="hover">
+            <template #reference>
+              <el-button class="rule-btn" :icon="InfoFilled" circle size="small" />
+            </template>
+            <div class="rule-pop">
+              <p>一天内违规满 {{ limit }} 次，当日禁止预约，次日自动恢复。</p>
+              <p>累计取消满 {{ cancelLimit }} 次，记恶意取消，该用户之后不可再自行取消预约。</p>
+            </div>
+          </el-popover>
           <el-button type="warning" :icon="Bell" @click="broadcastVisible = true"
             >发送通知</el-button
           >
@@ -167,6 +171,11 @@
               <el-form :model="form" label-position="top" class="profile-form">
                 <el-row :gutter="18">
                   <el-col :span="6">
+                    <el-form-item label="学号 / 登录账号">
+                      <el-input v-model="form.username" maxlength="20" />
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
                     <el-form-item label="姓名 / 昵称">
                       <el-input v-model="form.nickname" maxlength="20" />
                     </el-form-item>
@@ -181,6 +190,8 @@
                       <el-input v-model="form.email" maxlength="60" />
                     </el-form-item>
                   </el-col>
+                </el-row>
+                <el-row :gutter="18">
                   <el-col :span="6">
                     <el-form-item label="账号权限">
                       <el-select v-model="permValue" style="width: 100%">
@@ -191,6 +202,17 @@
                           :label="o.label"
                         />
                       </el-select>
+                    </el-form-item>
+                  </el-col>
+                  <el-col :span="6">
+                    <el-form-item label="重置密码">
+                      <el-input
+                        v-model="form.password"
+                        type="password"
+                        show-password
+                        maxlength="32"
+                        placeholder="留空表示不修改"
+                      />
                     </el-form-item>
                   </el-col>
                 </el-row>
@@ -451,7 +473,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Search, Refresh, Bell, Close } from '@element-plus/icons-vue'
+import { Search, Refresh, Bell, Close, InfoFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
 
 const loading = ref(false)
@@ -471,9 +493,11 @@ const detail = ref({ user: null, stats: {}, reservations: [], violations: [], me
 
 // 资料 + 统计数值 + 预约权限，统一由「保存修改」提交
 const form = reactive({
+  username: '',
   nickname: '',
   phone: '',
   email: '',
+  password: '',
   status: 1,
   cancelCount: 0,
   reservationTotal: 0,
@@ -511,32 +535,58 @@ const RES_STATUS_OPTIONS = [
   { value: 5, label: '爽约' },
   { value: 6, label: '违规' }
 ]
-// 时段已结束的记录只能改为「已完成」或「违规」，不能再回调成预约中/履约中
-const ENDED_STATUS_OPTIONS = RES_STATUS_OPTIONS.filter((s) => s.value === 3 || s.value === 6)
+// 打卡时间窗（与后端 ReservationService 常量一致）：开始前 30 分钟 ~ 开始后 5 分钟
+const CHECKIN_ADVANCE_MINUTES = 30
+const CHECKIN_LATE_MINUTES = 5
 
-/** 预约时段是否已经结束（endTime 早于当前时间） */
-function isReservationEnded(row) {
-  if (!row?.endTime) return false
-  const t = new Date(String(row.endTime).replace(' ', 'T')).getTime()
-  return Number.isFinite(t) && t < Date.now()
+/** 解析后端时间字符串为时间戳 */
+function parseTime(v) {
+  if (!v) return null
+  const t = new Date(String(v).replace(' ', 'T')).getTime()
+  return Number.isFinite(t) ? t : null
 }
 
-/** 已结束的记录：下拉里只保留终态互转，当前状态不在终态时保留一项以免显示空白 */
+/**
+ * 下拉可选状态：与后端 adminUpdateStatus 的时间规定保持一致。
+ * - 时段已结束：只能「已完成」/「违规」互切；
+ * - 「履约中」=代为打卡，需在打卡时间窗内（或已打卡）；
+ * - 「预约中」不可在已打卡或超过打卡时限后回退。
+ * 当前状态始终保留，避免下拉显示空白。
+ */
 function statusOptionsOf(row) {
-  if (!isReservationEnded(row)) return RES_STATUS_OPTIONS
-  const cur = RES_STATUS_OPTIONS.find((s) => s.value === row.status)
-  if (cur && !ENDED_STATUS_OPTIONS.some((s) => s.value === cur.value)) {
-    return [cur, ...ENDED_STATUS_OPTIONS]
+  const now = Date.now()
+  const start = parseTime(row.startTime)
+  const end = parseTime(row.endTime)
+  const checkedIn = row.checkinFlag === 1
+  let allowed
+  if (end != null && end < now) {
+    allowed = [3, 6]
+  } else {
+    // 打卡窗口：[start-30min, start+5min]
+    const windowOpen =
+      start != null &&
+      now >= start - CHECKIN_ADVANCE_MINUTES * 60000 &&
+      now <= start + CHECKIN_LATE_MINUTES * 60000
+    const latePassed = start != null && now > start + CHECKIN_LATE_MINUTES * 60000
+    allowed = RES_STATUS_OPTIONS.map((s) => s.value).filter((v) => {
+      // 「履约中」(2)：未打卡且不在窗口内不可选；「预约中」(1)：已打卡或超时限不可选
+      if (v === 2 && !checkedIn && !windowOpen) return false
+      if (v === 1 && (checkedIn || latePassed)) return false
+      return true
+    })
   }
-  return ENDED_STATUS_OPTIONS
+  const opts = RES_STATUS_OPTIONS.filter((s) => allowed.includes(s.value))
+  const cur = RES_STATUS_OPTIONS.find((s) => s.value === row.status)
+  if (cur && !allowed.includes(cur.value)) return [cur, ...opts]
+  return opts
 }
 const VIO_TYPE = { 1: '爽约', 2: '超时使用', 3: '恶意取消', 4: '其他' }
-// 账号权限：是否可用与能否预约本就是一件事，合并成一个选项
-// 0 按违规规则自动判定，1 强制可预约，2 今日禁约，3 禁用账号
+// 账号权限（单选，四个状态）：
+// 0 正常=可预约可取消；1 违规=禁止新建预约；2 禁止取消=可预约但不能取消；3 禁用账号=停用登录
 const PERM_OPTIONS = [
-  { value: 0, label: '自动（按违规判定）' },
-  { value: 1, label: '正常（可预约）' },
-  { value: 2, label: '今日禁约' },
+  { value: 0, label: '正常' },
+  { value: 1, label: '违规' },
+  { value: 2, label: '禁止取消' },
   { value: 3, label: '禁用账号' }
 ]
 
@@ -552,7 +602,7 @@ const statTiles = computed(() => [
   { key: 'totalViolations', label: '累计违规', min: form.todayViolations, max: 999 },
   {
     key: 'cancelCount',
-    label: `取消次数（≤${cancelLimit.value}，达上限后不可再取消）`,
+    label: '取消次数',
     min: 0,
     max: cancelLimit.value
   }
@@ -561,22 +611,50 @@ const detailState = computed(
   () => RES_STATE[detail.value.stats?.reservationState] || RES_STATE.none
 )
 const detailPerm = computed(() =>
-  permOf({ status: detail.value.user?.status, restricted: detail.value.stats?.restricted })
+  permOf({
+    status: detail.value.user?.status,
+    restricted: detail.value.stats?.restricted,
+    cancelCount: detail.value.stats?.cancelCount ?? detail.value.user?.cancelCount
+  })
 )
 
-// 表单里的账号权限：状态位 0 视为禁用，其余看预约权限覆盖位
+// 表单里的账号权限（单选）：由 status / restrictOverride / cancelCount 三个字段推导，优先级 禁用 > 违规 > 禁止取消 > 正常
 const permValue = computed({
-  get: () => (form.status === 1 ? (form.restrictOverride ?? 0) : 3),
+  get: () => {
+    if (form.status !== 1) return 3
+    if (form.restrictOverride === 2) return 1
+    if ((form.cancelCount ?? 0) >= cancelLimit.value) return 2
+    return 0
+  },
   set: (v) => {
-    form.status = v === 3 ? 0 : 1
-    form.restrictOverride = v === 3 ? 0 : v
+    if (v === 3) {
+      // 禁用账号：停用登录
+      form.status = 0
+      form.restrictOverride = 0
+      return
+    }
+    form.status = 1
+    if (v === 1) {
+      // 违规：禁止新建预约，仍可取消
+      form.restrictOverride = 2
+      if ((form.cancelCount ?? 0) >= cancelLimit.value) form.cancelCount = 0
+    } else if (v === 2) {
+      // 禁止取消：可预约，取消次数置上限（后端据此拦截取消）
+      form.restrictOverride = 1
+      form.cancelCount = cancelLimit.value
+    } else {
+      // 正常：可预约可取消
+      form.restrictOverride = 1
+      if ((form.cancelCount ?? 0) >= cancelLimit.value) form.cancelCount = 0
+    }
   }
 })
 
-/** 账号状态 + 预约权限合并后的展示：禁用 > 今日限约 > 正常 */
+/** 列表与详情的权限标签：与下拉四态同一套词汇（禁用 > 违规 > 禁止取消 > 正常） */
 function permOf(row) {
   if (row?.status !== 1) return { text: '已禁用', type: 'info' }
-  if (row.restricted) return { text: '今日限约', type: 'danger' }
+  if (row.restricted) return { text: '违规', type: 'danger' }
+  if ((row.cancelCount ?? 0) >= cancelLimit.value) return { text: '禁止取消', type: 'warning' }
   return { text: '正常', type: 'success' }
 }
 
@@ -657,9 +735,11 @@ function onSearch() {
 function resetForm() {
   const u = detail.value.user || {}
   const s = detail.value.stats || {}
+  form.username = u.username || ''
   form.nickname = u.nickname || ''
   form.phone = u.phone || ''
   form.email = u.email || ''
+  form.password = ''
   form.status = u.status ?? 1
   form.cancelCount = s.cancelCount ?? u.cancelCount ?? 0
   form.reservationTotal = s.reservationCount ?? u.reservationTotal ?? 0
@@ -729,13 +809,22 @@ function onDetailClosed() {
 }
 
 async function saveUser() {
+  if (!/^[0-9A-Za-z]{4,20}$/.test((form.username || '').trim())) {
+    ElMessage.warning('学号需为 4-20 位数字或字母')
+    return
+  }
   if (!form.nickname.trim()) {
     ElMessage.warning('姓名不能为空')
     return
   }
+  if (form.password && (form.password.length < 6 || form.password.length > 32)) {
+    ElMessage.warning('密码长度需为 6-32 位')
+    return
+  }
   saving.value = true
   try {
-    const res = await api.updateAdminUser(detail.value.user.id, {
+    const payload = {
+      username: form.username.trim(),
       nickname: form.nickname.trim(),
       phone: form.phone,
       email: form.email,
@@ -745,7 +834,10 @@ async function saveUser() {
       todayViolations: form.todayViolations,
       totalViolations: form.totalViolations,
       restrictOverride: form.restrictOverride
-    })
+    }
+    // 仅在填写了新密码时才提交，避免把空串当成重置指令
+    if (form.password) payload.password = form.password
+    const res = await api.updateAdminUser(detail.value.user.id, payload)
     if (res.code === 200 || res.code === 0) {
       ElMessage.success('已保存')
       await fetchDetail()
@@ -920,9 +1012,9 @@ onMounted(loadData)
     gap: 12px;
     align-items: center;
   }
-  .rule-tip {
-    font-size: 12px;
+  .rule-btn {
     color: #909399;
+    border-color: #dcdfe6;
   }
 }
 

@@ -3,11 +3,16 @@
     <el-card class="main-card" shadow="never">
       <template #header>
         <div class="page-head">
-          <p class="page-tip">
-            用户提交报修后先进入「待审核」，地点仍可正常预约；确认维修 →
-            资源变为「维修中」并暂停预约， 完成维修 →
-            恢复「可预约」。每次处理都会自动给报修人发一条站内通知，驳回需填写原因。
-          </p>
+          <el-popover placement="bottom-start" :width="360" trigger="hover">
+            <template #reference>
+              <el-button class="rule-btn" :icon="InfoFilled" circle size="small" />
+            </template>
+            <div class="rule-pop">
+              <p>用户提交报修后先进入「待审核」，地点仍可正常预约。</p>
+              <p>确认维修 → 资源变为「维修中」并暂停预约；完成维修 → 恢复「可预约」。</p>
+              <p>每次处理都会自动给报修人发一条站内通知，驳回需填写原因。</p>
+            </div>
+          </el-popover>
           <el-select
             v-model="query.status"
             class="status-filter"
@@ -104,6 +109,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
 
 const loading = ref(false)
@@ -221,10 +227,9 @@ onMounted(loadData)
   color: #24344d;
   font-size: 18px;
 }
-.page-tip {
-  margin: 0;
-  color: #7a8799;
-  font-size: 13px;
+.rule-btn {
+  color: #909399;
+  border-color: #dcdfe6;
 }
 .status-filter {
   width: 140px;

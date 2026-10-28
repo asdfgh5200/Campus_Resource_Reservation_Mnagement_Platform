@@ -39,10 +39,15 @@
       <template #header>
         <div class="card-header">
           <span class="title">违规情况</span>
-          <span class="rule"
-            >规则：一天内违规满 {{ summary.limit }} 次，当日暂停预约，次日自动恢复；累计取消满
-            {{ summary.cancelLimit }} 次后，账号将无法再自行取消预约</span
-          >
+          <el-popover placement="bottom-end" :width="340" trigger="hover">
+            <template #reference>
+              <el-button class="rule-btn" :icon="InfoFilled" circle size="small" />
+            </template>
+            <div class="rule-pop">
+              <p>一天内违规满 {{ summary.limit }} 次，当日暂停预约，次日自动恢复。</p>
+              <p>累计取消满 {{ summary.cancelLimit }} 次后，账号将无法再自行取消预约。</p>
+            </div>
+          </el-popover>
         </div>
       </template>
 
@@ -148,6 +153,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { InfoFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
 import { useUserStore } from '@/stores/user'
 import ReservationTracePanel from '@/components/ReservationTracePanel.vue'
@@ -290,9 +296,9 @@ onMounted(loadData)
       font-weight: 600;
       color: #303133;
     }
-    .rule {
-      font-size: 12px;
+    .rule-btn {
       color: #909399;
+      border-color: #dcdfe6;
     }
   }
   .restrict-tip {

@@ -33,16 +33,20 @@
           <el-button type="primary" :icon="Search" @click="searchReservations">查询</el-button>
           <el-button :icon="Refresh" @click="resetReservations">重置</el-button>
         </div>
-        <el-button class="log-btn" :icon="Tickets" @click="openLogs">操作日志</el-button>
-      </div>
-
-      <div class="table-tip">
-        <el-icon><InfoFilled /></el-icon>
-        <span>
-          这里只管理普通用户的预约。点击「状态」下拉可直接调整，改为「使用中」即代为打卡；
-          时段已结束的记录只能在「已结束」与「违规」之间调整；
-          点击任意一行查看完整记录（含打卡坐标与操作时间线）。
-        </span>
+        <div class="toolbar-right">
+          <el-popover placement="bottom-end" :width="360" trigger="hover">
+            <template #reference>
+              <el-button class="rule-btn" :icon="InfoFilled" circle size="small" />
+            </template>
+            <div class="rule-pop">
+              <p>这里只管理普通用户的预约。</p>
+              <p>点击「状态」下拉可直接调整，改为「使用中」即代为打卡（需在打卡时间窗内）。</p>
+              <p>时段已结束的记录只能在「已结束」与「违规」之间调整。</p>
+              <p>点击任意一行查看完整记录（含打卡坐标与操作时间线）。</p>
+            </div>
+          </el-popover>
+          <el-button class="log-btn" :icon="Tickets" @click="openLogs">操作日志</el-button>
+        </div>
       </div>
 
       <el-table
@@ -361,19 +365,46 @@ const statusText = { 1: '待打卡', 2: '使用中', 3: '已结束', 4: '已取�
 const STATUS_CODES = [1, 2, 3, 4, 5, 6]
 // 时段已结束的记录：只能在「已结束」与「违规」之间切换
 const ENDED_STATUS_CODES = [3, 6]
+// 打卡时间窗（与后端 ReservationService 常量一致）：开始前 30 分钟 ~ 开始后 5 分钟
+const CHECKIN_ADVANCE_MINUTES = 30
+const CHECKIN_LATE_MINUTES = 5
 
-/** 预约时段是否已经结束（endTime 早于当前时间） */
-function isReservationEnded(row) {
-  if (!row?.endTime) return false
-  const t = new Date(String(row.endTime).replace(' ', 'T')).getTime()
-  return Number.isFinite(t) && t < Date.now()
+/** 解析后端时间字符串（yyyy-MM-dd HH:mm:ss）为时间戳 */
+function parseTime(v) {
+  if (!v) return null
+  const t = new Date(String(v).replace(' ', 'T')).getTime()
+  return Number.isFinite(t) ? t : null
 }
 
-/** 已结束的记录不再提供「待打卡/使用中」等可选状态，当前状态保留以免下拉显示空白 */
+/**
+ * 下拉可选状态：与后端 adminUpdateStatus 的时间规定保持一致。
+ * - 时段已结束：只能「已结束」/「违规」互切；
+ * - 「使用中」=代为打卡，需在打卡时间窗内（或已打卡）；
+ * - 「待打卡」不可在已打卡或超过打卡时限后回退。
+ * 当前状态始终保留，避免下拉显示空白。
+ */
 function statusOptionsOf(row) {
-  if (!isReservationEnded(row)) return STATUS_CODES
-  const opts = [...ENDED_STATUS_CODES]
-  if (!opts.includes(row.status)) opts.unshift(row.status)
+  const now = Date.now()
+  const start = parseTime(row.startTime)
+  const end = parseTime(row.endTime)
+  const checkedIn = row.checkinFlag === 1
+  let opts
+  if (end != null && end < now) {
+    opts = [...ENDED_STATUS_CODES]
+  } else {
+    opts = [...STATUS_CODES]
+    // 打卡窗口：[start-30min, start+5min]
+    const windowOpen =
+      start != null &&
+      now >= start - CHECKIN_ADVANCE_MINUTES * 60000 &&
+      now <= start + CHECKIN_LATE_MINUTES * 60000
+    // 未到窗口或已超过时限且未打卡：不能代为打卡（去掉「使用中」）
+    if (!checkedIn && !windowOpen) opts = opts.filter((c) => c !== 2)
+    // 已打卡或已超过打卡时限：不能退回「待打卡」
+    const latePassed = start != null && now > start + CHECKIN_LATE_MINUTES * 60000
+    if (checkedIn || latePassed) opts = opts.filter((c) => c !== 1)
+  }
+  if (!opts.includes(row.status)) opts = [row.status, ...opts]
   return opts
 }
 const statusTagType = { 1: 'warning', 2: 'primary', 3: 'info', 4: 'info', 5: 'danger', 6: 'danger' }
@@ -663,23 +694,19 @@ onMounted(() => {
   }
 }
 
-.table-tip {
+.toolbar-right {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  background: #f5f8fd;
-  border: 1px solid #e8f0fb;
-  color: #66758c;
-  font-size: 12px;
-  line-height: 1.6;
+  align-items: center;
+  gap: 10px;
 
-  .el-icon {
-    margin-top: 2px;
-    color: #7a9cc8;
+  .log-btn {
+    flex-shrink: 0;
   }
+}
+
+.rule-btn {
+  color: #909399;
+  border-color: #dcdfe6;
 }
 
 /* 表格：表头轻量、行高舒展，避免信息挤在一起 */

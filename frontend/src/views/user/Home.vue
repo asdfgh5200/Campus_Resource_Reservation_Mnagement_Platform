@@ -106,94 +106,62 @@
                   <span v-for="f in cur.features" :key="f" class="rc-feat">{{ f }}</span>
                 </div>
               </div>
-              <div class="rc-stat-box">
-                <div class="rc-stat-item">
-                  <span class="num">{{ stats.total }}</span>
-                  <span class="lbl">资源总数</span>
-                </div>
-                <div class="rc-stat-item ok">
-                  <span class="num">{{ stats.available }}</span>
-                  <span class="lbl">当前可约</span>
-                </div>
-                <div class="rc-stat-item danger">
-                  <span class="num">{{ stats.busy }}</span>
-                  <span class="lbl">占用中</span>
-                </div>
-                <div class="rc-stat-item warn">
-                  <span class="num">{{ stats.repair }}</span>
-                  <span class="lbl">维修中</span>
-                </div>
-              </div>
+              <!-- 分类实景图：独占一列，不与统计数字重叠 -->
+              <div class="rc-head-art"></div>
             </header>
 
-            <!-- 我的预约概览 -->
-            <div class="rc-mine">
-              <span class="mine-title">我的预约</span>
-              <span class="mine-item"><i class="d warn"></i>待打卡 {{ mine.pending }}</span>
-              <span class="mine-item"><i class="d danger"></i>使用中 {{ mine.inUse }}</span>
-              <span class="mine-item"><i class="d gray"></i>已结束 {{ mine.done }}</span>
-              <el-button link type="primary" class="mine-more" @click="goMine">
-                查看全部 <el-icon><ArrowRight /></el-icon>
-              </el-button>
+            <!-- 统计整行均分，数字与标签同行 -->
+            <div class="rc-stat-box">
+              <div class="rc-stat-item">
+                <span class="num">{{ stats.total }}</span>
+                <span class="lbl">资源总数</span>
+              </div>
+              <div class="rc-stat-item ok">
+                <span class="num">{{ stats.available }}</span>
+                <span class="lbl">当前可约</span>
+              </div>
+              <div class="rc-stat-item danger">
+                <span class="num">{{ stats.busy }}</span>
+                <span class="lbl">占用中</span>
+              </div>
+              <div class="rc-stat-item warn">
+                <span class="num">{{ stats.repair }}</span>
+                <span class="lbl">维修中</span>
+              </div>
             </div>
 
-            <!-- 资源预览：圆点为"当前是否被占用" -->
-            <div class="rc-preview-head">
-              <span class="ph-title">资源速览</span>
-              <span class="ph-legend">
-                <i class="d ok"></i>空闲 <i class="d danger"></i>占用
-                <i class="d warn"></i>维修/报修
+            <!-- 该类资源的真实使用规则，代替原来意义不大的随机速览 -->
+            <div class="rc-meta-row">
+              <span class="rc-meta">
+                <el-icon><Clock /></el-icon>开放 {{ cur.open }}
               </span>
-            </div>
-            <div class="rc-preview" v-loading="loading">
-              <div
-                v-for="r in preview?.records || []"
-                :key="r.id"
-                class="rc-chip"
-                @click="goDetail(r.id)"
-              >
-                <span class="dot" :style="{ background: chipColor(r) }"></span>
-                <span class="name">{{ r.name }}</span>
-                <span class="meta">{{ r.building }} {{ r.floor }}</span>
-              </div>
-              <div v-if="!loading && !preview?.records?.length" class="rc-empty">暂无资源</div>
+              <span class="rc-meta">
+                <el-icon><Calendar /></el-icon>{{ cur.advance }}
+              </span>
+              <span class="rc-meta">
+                <el-icon><InfoFilled /></el-icon>{{ cur.rule }}
+              </span>
             </div>
 
             <div class="rc-actions">
+              <span class="rc-actions-tip">{{ cur.tip }}</span>
               <el-button type="primary" round @click="goCategory(cur.type)">
-                查看全部 {{ cur.label }} <el-icon style="margin-left: 4px"><ArrowRight /></el-icon>
+                查看全部 {{ cur.label }}
+                <el-icon style="margin-left: 4px"><ArrowRight /></el-icon>
               </el-button>
             </div>
           </div>
         </div>
       </Transition>
     </main>
-
-    <!-- 资源速览：点开详情用抽屉，不离开首页也不打乱当前分类 -->
-    <el-drawer
-      v-model="detailVisible"
-      :size="detailDrawerSize"
-      :destroy-on-close="true"
-      class="detail-drawer"
-      @closed="detailId = null"
-    >
-      <template #header>
-        <div class="drawer-header">
-          <span class="drawer-title">资源详情</span>
-          <span class="drawer-hint">关闭后回到当前分类</span>
-        </div>
-      </template>
-      <ResourceDetailPanel v-if="detailId" :resource-id="detailId" @close="detailVisible = false" />
-    </el-drawer>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Sort } from '@element-plus/icons-vue'
+import { ArrowRight, Sort, Clock, Calendar, InfoFilled } from '@element-plus/icons-vue'
 import { api } from '@/api'
-import ResourceDetailPanel from '@/components/ResourceDetailPanel.vue'
 import { readLastCategory, saveLastCategory } from '@/utils/lastCategory'
 
 const router = useRouter()
@@ -206,8 +174,12 @@ const cats = [
     color: '#144E9C',
     bg: '/assets/type-classroom.png',
     pageBg: '/assets/pagebg-1.jpg',
-    desc: '覆盖 4 个校区·27 栋教学楼，共 820 间真实教室，课表实时联动。',
-    features: ['课表联动', '无需预约', '空闲可直接使用']
+    desc: '覆盖 4 个校区·44 栋教学楼，共 1016 间真实教室，课表按教学周联动。',
+    features: ['课表联动', '无需预约', '空闲可直接使用'],
+    open: '08:00 - 22:00',
+    advance: '无需预约，课程空档可直接使用',
+    rule: '排课时段自动占用，不参与预约',
+    tip: '想知道哪间教室哪节课空着？进去按日期和时段查'
   },
   {
     type: 2,
@@ -216,8 +188,12 @@ const cats = [
     color: '#2E76DB',
     bg: '/assets/type-lab.png',
     pageBg: '/assets/pagebg-2.jpg',
-    desc: '3 个校区·14 栋实验楼，共 155 间实验室，按真实排课展示占用。',
-    features: ['限 10 人小组', '按时段独占', '定位打卡']
+    desc: '3 个校区·41 栋实验楼，共 394 间实验室，按真实排课展示占用。',
+    features: ['按容量预约', '按时段独占', '定位打卡'],
+    open: '08:00 - 22:00',
+    advance: '可预约未来 7 天内的时段',
+    rule: '按时段独占，到点需定位打卡',
+    tip: '先选时段看哪些实验室空着，再按容量预约'
   },
   {
     type: 3,
@@ -227,7 +203,11 @@ const cats = [
     bg: '/assets/type-library.png',
     pageBg: '/assets/pagebg-3.jpg',
     desc: '6F / 7F 多媒体自习室，每层 60 个座位，可缩放的座位图按位预约。',
-    features: ['6F / 7F 座位图', '单人单座', '隔板独立工位']
+    features: ['6F / 7F 座位图', '单人单座', '隔板独立工位'],
+    open: '08:00 - 22:00',
+    advance: '仅可预约次日座位',
+    rule: '一人一座，到点需定位打卡',
+    tip: '在座位图上点选座位，预约后记得按时打卡'
   },
   {
     type: 4,
@@ -237,7 +217,11 @@ const cats = [
     bg: '/assets/gym-basketball.png',
     pageBg: '/assets/pagebg-4.jpg',
     desc: '4 个校区·17 处场馆，共 368 个场地，容量与剩余实时可见。',
-    features: ['多人同时预约', '容量实时校验', '剩余数量可见']
+    features: ['多人同时预约', '容量实时校验', '剩余数量可见'],
+    open: '09:00 - 21:00',
+    advance: '可预约未来 7 天内的时段',
+    rule: '多人共享同一时段，按剩余容量叠加',
+    tip: '先选时段看剩余多少场地，再决定约几块'
   }
 ]
 
@@ -256,68 +240,37 @@ const initialIndex = Math.max(
 )
 const active = ref(initialIndex)
 const cur = computed(() => cats[active.value])
-const preview = ref(null)
-const loading = ref(false)
 const animating = ref(false)
 
 // 当前分类的资源统计（总数 / 可约 / 占用 / 维修）
 const stats = reactive({ total: 0, available: 0, busy: 0, repair: 0 })
-// 我的预约概览
-const mine = reactive({ pending: 0, inUse: 0, done: 0 })
+// 按分类缓存统计结果，切换分类不重复拉取
+const statsCache = reactive({})
 
 const rootEl = ref(null)
 // 光点坐标用响应式：首帧就落在上次的分类上，不会先闪一下教室
 const travelerPos = reactive({ x: nodes[initialIndex].x, y: nodes[initialIndex].y })
 let raf = null
 
-const previews = reactive({})
-
-// 资源圆点颜色：维修/报修=黄、占用=红、空闲=绿（教室看"是否正在上课"）
-function chipColor(r) {
-  if (r.status === 3 || r.status === 4) return '#e6a23c'
-  if (r.resourceType === 1) return r.courseBusy ? '#f56c6c' : '#67c23a'
-  return r.reserved ? '#f56c6c' : '#67c23a'
-}
-
-async function loadPreview(type) {
-  if (previews[type]) return
-  const res = await api.getResourcePage({ current: 1, size: 1000, type })
-  if (res.code === 200) {
-    const recs = res.data.records || []
-    previews[type] = {
-      total: res.data.total || recs.length,
-      records: recs.slice(0, 8),
-      available: recs.filter((r) => r.status === 1 && !r.reserved && !r.courseBusy).length,
-      busy: recs.filter(
-        (r) => r.status !== 3 && r.status !== 4 && (r.reserved || r.courseBusy || r.status === 2)
-      ).length,
-      repair: recs.filter((r) => r.status === 3 || r.status === 4).length
-    }
+async function loadStats(type) {
+  if (statsCache[type]) return
+  // 一次拉全量（教室 1016 间），统计数字才与「资源总数」对得上
+  const res = await api.getResourcePage({ current: 1, size: 2000, type })
+  if (res.code !== 200) return
+  const recs = res.data.records || []
+  statsCache[type] = {
+    total: res.data.total || recs.length,
+    available: recs.filter((r) => r.status === 1 && !r.reserved && !r.courseBusy).length,
+    busy: recs.filter(
+      (r) => r.status !== 3 && r.status !== 4 && (r.reserved || r.courseBusy || r.status === 2)
+    ).length,
+    repair: recs.filter((r) => r.status === 3 || r.status === 4).length
   }
 }
 
-async function loadMine() {
-  const res = await api.getMyReservations({ current: 1, size: 100 })
-  if (res.code === 200) {
-    const recs = res.data?.records || []
-    mine.pending = recs.filter((r) => r.status === 1).length
-    mine.inUse = recs.filter((r) => r.status === 2).length
-    mine.done = recs.filter((r) => r.status === 3).length
-  }
-}
-
-async function showPreview(i) {
-  loading.value = true
-  preview.value = previews[cats[i].type] || null
-  await loadPreview(cats[i].type)
-  preview.value = previews[cats[i].type]
-  Object.assign(stats, {
-    total: preview.value?.total || 0,
-    available: preview.value?.available || 0,
-    busy: preview.value?.busy || 0,
-    repair: preview.value?.repair || 0
-  })
-  loading.value = false
+async function applyStats(i) {
+  await loadStats(cats[i].type)
+  Object.assign(stats, statsCache[cats[i].type] || { total: 0, available: 0, busy: 0, repair: 0 })
 }
 
 function switchTo(i) {
@@ -326,7 +279,7 @@ function switchTo(i) {
   saveLastCategory(cats[i].type)
   animating.value = true
   animateTraveler(nodes[i].x, nodes[i].y)
-  showPreview(i)
+  applyStats(i)
   setTimeout(() => {
     animating.value = false
   }, 650)
@@ -364,27 +317,12 @@ function onKey(e) {
 function goCategory(type) {
   router.push(`/category/${type}`)
 }
-function goDetail(id) {
-  // 详情用侧边抽屉展示，留在首页
-  detailId.value = id
-  detailVisible.value = true
-}
-
-const detailVisible = ref(false)
-const detailId = ref(null)
-// 宽屏固定 760px，窄屏自适应留边
-const detailDrawerSize = 'min(760px, 94vw)'
-function goMine() {
-  router.push('/my-reservations')
-}
-
 onMounted(async () => {
   rootEl.value?.focus()
   // 非被动监听，确保 preventDefault 生效
   rootEl.value?.addEventListener('wheel', onWheel, { passive: false })
-  loadMine()
-  await Promise.all(cats.map((c) => loadPreview(c.type)))
-  await showPreview(active.value)
+  await Promise.all(cats.map((c) => loadStats(c.type)))
+  await applyStats(active.value)
 })
 
 onBeforeUnmount(() => {
@@ -555,11 +493,13 @@ onBeforeUnmount(() => {
 }
 .rc-panel {
   position: relative;
+  display: flex;
   width: 100%;
+  min-height: 470px;
   background: #fff;
   border: 1px solid #dbe6f5;
   border-radius: 20px;
-  padding: 30px 32px;
+  padding: 28px 32px 24px;
   overflow: hidden;
   box-shadow: 0 8px 30px rgba(30, 98, 208, 0.1);
 }
@@ -588,35 +528,34 @@ onBeforeUnmount(() => {
 .rc-panel-inner {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
 }
 
 .rc-panel-head {
-  position: relative;
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
-  gap: 20px;
-  margin-bottom: 22px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid rgba(30, 98, 208, 0.1);
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(30, 98, 208, 0.08);
 }
 
-/* 标题区右侧露出分类实景图 */
-.rc-panel-head::after {
-  content: '';
-  position: absolute;
-  right: -34px;
-  top: -30px;
-  width: 220px;
-  height: 118px;
+/* 分类实景图：独占一列，不再压住统计数字 */
+.rc-head-art {
+  flex: 0 0 300px;
+  height: 176px;
+  border-radius: 16px;
   background-image: var(--bg);
   background-size: cover;
   background-position: center;
-  border-radius: 0 20px 0 90px;
-  opacity: 0.5;
-  mask-image: linear-gradient(90deg, transparent 0%, #000 60%);
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 60%);
-  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(30, 98, 208, 0.16);
+}
+
+.rc-title-box {
+  min-width: 0;
 }
 .rc-badge {
   display: inline-block;
@@ -648,30 +587,29 @@ onBeforeUnmount(() => {
   margin: 0;
   max-width: 520px;
 }
+/* 统计整行均分，数字与标签同行 */
 .rc-stat-box {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  gap: 10px;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 .rc-stat-item {
-  min-width: 74px;
-  text-align: center;
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: #f7f8fa;
-  border: 1px solid #ebeef5;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  padding: 14px 8px;
+  border-radius: 14px;
+  background: #f6f9fd;
+  border: 1px solid #e8eff9;
   .num {
-    display: block;
-    font-size: 22px;
+    font-size: 26px;
     font-weight: 800;
+    line-height: 1;
     color: #303133;
   }
   .lbl {
-    font-size: 11px;
+    font-size: 12px;
     color: #909399;
   }
   &.ok .num {
@@ -700,141 +638,32 @@ onBeforeUnmount(() => {
   }
 }
 
-/* 我的预约概览 */
-.rc-mine {
+.rc-meta-row {
   display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: 10px 16px;
-  margin-bottom: 14px;
-  border-radius: 12px;
-  background: #f7f9fc;
-  border: 1px solid #eef2f7;
-  .mine-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: #303133;
-  }
-  .mine-item {
-    display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  .rc-meta {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: 13px;
+    font-size: 12.5px;
     color: #606266;
-  }
-  .mine-more {
-    margin-left: auto;
-  }
-  .d {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    &.ok {
-      background: #67c23a;
-    }
-    &.danger {
-      background: #f56c6c;
-    }
-    &.warn {
-      background: #e6a23c;
-    }
-    &.gray {
-      background: #c0c4cc;
+    .el-icon {
+      color: var(--accent);
     }
   }
-}
-
-/* 资源速览标题与图例 */
-.rc-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 2px 8px;
-  .ph-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: #303133;
-  }
-  .ph-legend {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 12px;
-    color: #909399;
-    .d {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 4px;
-      vertical-align: middle;
-      &.ok {
-        background: #67c23a;
-      }
-      &.danger {
-        background: #f56c6c;
-      }
-      &.warn {
-        background: #e6a23c;
-      }
-    }
-  }
-}
-
-.rc-preview {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
-  min-height: 168px;
-  margin-bottom: 22px;
-}
-.rc-chip {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  cursor: pointer;
-  transition: all 0.25s;
-  &:hover {
-    background: #f5f7fa;
-    border-color: var(--accent);
-    transform: translateX(4px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .name {
-    font-size: 13px;
-    font-weight: 600;
-    color: #303133;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .meta {
-    font-size: 11px;
-    color: #c0c4cc;
-  }
-}
-.rc-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: #c0c4cc;
-  padding: 40px 0;
 }
 
 .rc-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: auto;
+  .rc-actions-tip {
+    font-size: 12px;
+    color: #a8abb2;
+  }
 }
 
 /* ---------- 切换过渡 ---------- */
@@ -871,11 +700,23 @@ onBeforeUnmount(() => {
   .rc-panel {
     padding: 22px 18px;
   }
+  .rc-panel {
+    min-height: 0;
+  }
   .rc-panel-head {
     flex-direction: column;
+    gap: 16px;
   }
-  .rc-preview {
-    grid-template-columns: 1fr;
+  .rc-head-art {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 140px;
+  }
+  .rc-stat-box {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rc-actions {
+    flex-wrap: wrap;
   }
 }
 </style>

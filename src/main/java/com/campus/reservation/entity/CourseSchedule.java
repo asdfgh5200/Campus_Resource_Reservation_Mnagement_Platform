@@ -29,6 +29,12 @@ public class CourseSchedule {
 
     private String term;
 
+    /**
+     * 上课周次位图：第 n 个字符为 '1' 表示第 n 周上课（最多 30 周）。
+     * 为空表示每周都上（历史数据）。教务系统 SKZC 字段原样保存。
+     */
+    private String weeks;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 

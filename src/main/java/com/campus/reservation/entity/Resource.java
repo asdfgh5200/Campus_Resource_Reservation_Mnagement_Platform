@@ -90,11 +90,11 @@ public class Resource {
     @TableField(exist = false)
     private String reservedRemark;
 
-    /** 教室当前是否正在上课（教室不可预约，仅用于展示占用），非数据库字段 */
+    /** 当前时刻是否正被课程占用（教室仅展示，其余类型占用期间整段不可预约），非数据库字段 */
     @TableField(exist = false)
     private Boolean courseBusy;
 
-    /** 教室当前正在上的课程名，非数据库字段 */
+    /** 当前正在上的课程名，非数据库字段 */
     @TableField(exist = false)
     private String courseNowName;
 

@@ -95,12 +95,15 @@ CREATE TABLE IF NOT EXISTS `reservation` (
 CREATE TABLE IF NOT EXISTS `course_schedule` (
     `id`          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `room_id`     BIGINT       NOT NULL COMMENT '教室（resource.id）',
-    `course_name` VARCHAR(100) NOT NULL COMMENT '课程名称',
+    `course_name` VARCHAR(200) NOT NULL COMMENT '课程名称',
     `day_of_week` TINYINT      NOT NULL COMMENT '星期：1~7',
     `start_time`  TIME         NOT NULL COMMENT '上课时间',
     `end_time`    TIME         NOT NULL COMMENT '下课时间',
-    `teacher`     VARCHAR(50)  DEFAULT NULL COMMENT '教师',
+    -- teacher: 教务一门课可能有 20 多位联合授课教师，最长实际值约 90 字符
+    `teacher`     VARCHAR(200) DEFAULT NULL COMMENT '教师（多人时逗号分隔）',
     `term`        VARCHAR(20)  DEFAULT NULL COMMENT '学期',
+    -- weeks: 30 位周次位图，第 n 位为 '1' 表示第 n 周上课；NULL/空串表示每周上课（老数据）
+    `weeks`       VARCHAR(40)  DEFAULT NULL COMMENT '上课周次位图（第 n 位 1 = 第 n 周上课）',
     `created_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `updated_at`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',

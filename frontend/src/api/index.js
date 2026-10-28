@@ -172,10 +172,12 @@ export const api = {
     return request.get('/courses/available', { params: { roomId, date } })
   },
 
-  // 空闲教室查询：按校区 + 楼栋 + 教室类型 + 日期 + 时段 + 关键词筛选可选教室
-  getFreeRooms({ date, start, end, campus, buildings, floor, roomTypes, keyword } = {}) {
+  // 空闲资源查询：按类型 + 校区 + 楼栋 + 细分类型 + 日期 + 时段 + 关键词筛选真正可用的资源
+  // type: 1 教室 / 2 实验室 / 3 图书馆 / 4 体育馆（不传默认 1）
+  getFreeRooms({ type, date, start, end, campus, buildings, floor, roomTypes, keyword } = {}) {
     return request.get('/courses/free-rooms', {
       params: {
+        type,
         date,
         start,
         end,

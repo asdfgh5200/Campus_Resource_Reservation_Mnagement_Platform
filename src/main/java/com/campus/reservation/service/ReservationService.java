@@ -3,15 +3,18 @@ package com.campus.reservation.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.reservation.common.BizException;
+import com.campus.reservation.common.TermCalendar;
 import com.campus.reservation.common.UserContext;
 import com.campus.reservation.dto.ReservationDTO;
 import com.campus.reservation.dto.ReservationTraceVO;
+import com.campus.reservation.entity.CourseSchedule;
 import com.campus.reservation.entity.Holiday;
 import com.campus.reservation.entity.Reservation;
 import com.campus.reservation.entity.ReservationLog;
 import com.campus.reservation.entity.Resource;
 import com.campus.reservation.entity.SysUser;
 import com.campus.reservation.entity.Violation;
+import com.campus.reservation.mapper.CourseScheduleMapper;
 import com.campus.reservation.mapper.HolidayMapper;
 import com.campus.reservation.mapper.ReservationMapper;
 import com.campus.reservation.mapper.ResourceMapper;
@@ -26,6 +29,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -54,11 +58,15 @@ public class ReservationService {
     /** 操作日志中时间的展示格式 */
     private static final DateTimeFormatter LOG_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
+    /** 课表占用时段的展示格式：课表只记时刻，不含日期 */
+    private static final DateTimeFormatter COURSE_TIME_FMT = DateTimeFormatter.ofPattern("HH:mm");
+
     /** 预约状态文案（下标即状态值），用于管理端操作留痕 */
     private static final String[] STATUS_LABELS = {"未知", "待打卡", "使用中", "已结束", "已取消", "爽约", "违规"};
 
     private final ReservationMapper reservationMapper;
     private final ResourceMapper resourceMapper;
+    private final CourseScheduleMapper courseScheduleMapper;
     private final SysUserMapper userMapper;
     private final HolidayMapper holidayMapper;
     private final ViolationMapper violationMapper;
@@ -190,6 +198,16 @@ public class ReservationService {
             throw BizException.conflict("节假日暂停预约");
         }
 
+        // 课表占用：排课覆盖的时段整段不可预约，实验室/图书馆/体育馆与教室同规则。
+        // 体育馆也整段封死而不做容量扣减：一节课会占满场地并搬动器材，按人数放行会打扰正常教学。
+        CourseSchedule busyCourse = findCourseConflict(dto.getResourceId(), start, end);
+        if (busyCourse != null) {
+            throw BizException.conflict(String.format("该时段「%s」正在上课（%s ~ %s），暂不可预约",
+                    busyCourse.getCourseName(),
+                    busyCourse.getStartTime().format(COURSE_TIME_FMT),
+                    busyCourse.getEndTime().format(COURSE_TIME_FMT)));
+        }
+
         // 时间冲突检测：体育馆允许多人同时预约（按时段人数之和校验），其他资源不允许时段重叠
         boolean isGym = resource.getResourceType() != null && resource.getResourceType() == 4;
         int headcount = dto.getHeadcount() == null ? 1 : dto.getHeadcount();
@@ -242,6 +260,36 @@ public class ReservationService {
         writeLog(userId, reservation.getId(), dto.getResourceId(), ReservationLog.ACTION_CREATE,
                 String.format("创建预约：%s %s ~ %s", resource.getName(), start.format(LOG_TIME_FMT), end.format(LOG_TIME_FMT)));
         return reservation;
+    }
+
+    /**
+     * 找出与所选时段重叠的第一条课程。预约已禁止跨天，故按同一自然日比较时刻即可。
+     * 冲突判定与预约一致：半开区间 [start, end)，newStart &lt; courseEnd AND newEnd &gt; courseStart。
+     *
+     * <p>教务课表并非每周都上（如「8周」「13-15周(单)」），先按教学周过滤，
+     * 否则只排在某几周的课会把其余周次的同一时段也误判为占用。
+     */
+    private CourseSchedule findCourseConflict(Long resourceId, LocalDateTime start, LocalDateTime end) {
+        List<CourseSchedule> courses = courseScheduleMapper.selectList(Wrappers.<CourseSchedule>lambdaQuery()
+                .eq(CourseSchedule::getRoomId, resourceId)
+                .eq(CourseSchedule::getDayOfWeek, start.getDayOfWeek().getValue())
+                .orderByAsc(CourseSchedule::getStartTime));
+        if (courses.isEmpty()) {
+            return null;
+        }
+        int week = TermCalendar.weekOf(start.toLocalDate());
+        LocalTime from = start.toLocalTime();
+        LocalTime to = end.toLocalTime();
+        for (CourseSchedule c : courses) {
+            if (!TermCalendar.occupies(c.getWeeks(), week)) {
+                continue;
+            }
+            if (c.getStartTime() != null && c.getEndTime() != null
+                    && c.getStartTime().isBefore(to) && c.getEndTime().isAfter(from)) {
+                return c;
+            }
+        }
+        return null;
     }
 
     /**
@@ -457,7 +505,10 @@ public class ReservationService {
 
     /**
      * 管理端：直接修改预约状态（与用户端同一套状态值）。
-     * 切到使用中时补打卡标记（不受现场打卡时间窗口限制，视为管理员代为打卡）。
+     * 管理员调整同样要遵守时间规定，与现场打卡共用同一套打卡时间窗（开始前 30 分钟 ~ 开始后 5 分钟）：
+     * 1) 未到打卡窗口不能改为「使用中」（视为代为打卡），未打卡超过时限只能改判「已结束」或「违规」；
+     * 2) 已打卡的记录不可退回「待打卡」（打卡记录已产生），打卡时限过后也不可再回调为「待打卡」；
+     * 3) 时段已结束的记录只能在「已结束」与「违规」之间调整，不允许回退为进行态。
      */
     @Transactional
     public Reservation adminUpdateStatus(Long id, Integer status) {
@@ -465,6 +516,8 @@ public class ReservationService {
         if (status == null || status < Reservation.STATUS_PENDING || status > Reservation.STATUS_VIOLATED) {
             throw BizException.badRequest("预约状态不合法");
         }
+        // 先执行懒惰结算，让库里状态与当前时刻一致，再基于最新状态做流转校验
+        refreshStatuses();
         Reservation reservation = reservationMapper.selectById(id);
         if (reservation == null) {
             throw BizException.notFound("预约不存在");
@@ -472,6 +525,39 @@ public class ReservationService {
         int before = reservation.getStatus() == null ? 0 : reservation.getStatus();
         if (before == status) {
             throw BizException.badRequest("该预约已经是「" + statusLabel(status) + "」，无需修改");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        boolean checkedIn = reservation.getCheckinFlag() != null && reservation.getCheckinFlag() == 1;
+        // 时段已结束：只能在「已结束」与「违规」之间调整，与前端下拉的可选项保持一致
+        if (!now.isBefore(reservation.getEndTime())
+                && status != Reservation.STATUS_COMPLETED && status != Reservation.STATUS_VIOLATED) {
+            throw BizException.badRequest(String.format(
+                    "预约时段已结束（%s），只能在「已结束」与「违规」之间调整",
+                    reservation.getEndTime().format(LOG_TIME_FMT)));
+        }
+        if (status == Reservation.STATUS_PENDING) {
+            if (checkedIn) {
+                throw BizException.badRequest(String.format(
+                        "该预约已于 %s 完成打卡，不可退回「待打卡」",
+                        reservation.getCheckinTime().format(LOG_TIME_FMT)));
+            }
+            if (now.isAfter(reservation.getStartTime().plusMinutes(CHECKIN_LATE_MINUTES))) {
+                throw BizException.badRequest(String.format(
+                        "已超过打卡时限（需在预约开始后 %d 分钟内完成打卡），不可改为「待打卡」", CHECKIN_LATE_MINUTES));
+            }
+        }
+        if (status == Reservation.STATUS_IN_USE && !checkedIn) {
+            // 管理员切「使用中」即代为打卡，同样受打卡时间窗约束：
+            // 未到窗口不能提前置为使用中，超过时限则视为爽约只能改判「已结束」或「违规」
+            if (now.isBefore(reservation.getStartTime().minusMinutes(CHECKIN_ADVANCE_MINUTES))) {
+                throw BizException.badRequest(String.format(
+                        "未到打卡时间，不能改为「使用中」（可在预约开始前 %d 分钟内代为打卡）", CHECKIN_ADVANCE_MINUTES));
+            }
+            if (now.isAfter(reservation.getStartTime().plusMinutes(CHECKIN_LATE_MINUTES))) {
+                throw BizException.badRequest(String.format(
+                        "已超过打卡时限（需在预约开始后 %d 分钟内完成打卡），不可改为「使用中」，只能改判「已结束」或「违规」",
+                        CHECKIN_LATE_MINUTES));
+            }
         }
         reservation.setStatus(status);
         if (status == Reservation.STATUS_IN_USE) {

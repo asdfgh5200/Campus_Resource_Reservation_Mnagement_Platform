@@ -15,6 +15,7 @@ import com.campus.reservation.mapper.SysUserMapper;
 import com.campus.reservation.mapper.UserMessageMapper;
 import com.campus.reservation.mapper.ViolationMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -50,6 +51,9 @@ public class AdminUserService {
     private final ResourceMapper resourceMapper;
     private final UserMessageMapper messageMapper;
     private final MessageService messageService;
+
+    /** 重置密码时用 BCrypt 加密，与注册/登录保持同一套编码器 */
+    private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
 
     /** 用户分页：仅普通用户，含预约数、当前预约状态、取消次数、今日/累计违规、是否今日受限 */
     public Map<String, Object> page(String keyword, Integer current, Integer size) {
@@ -191,12 +195,36 @@ public class AdminUserService {
         }
         SysUser patch = new SysUser();
         patch.setId(id);
+        // 学号（登录名）：管理员可改，需符合格式且未被其他账号占用（username 上有唯一索引）
+        if (body.containsKey("username")) {
+            String username = text(body.get("username"));
+            if (!username.matches("^[0-9A-Za-z]{4,20}$")) {
+                throw BizException.badRequest("学号需为 4-20 位数字或字母");
+            }
+            Long nameCnt = userMapper.selectCount(Wrappers.<SysUser>lambdaQuery()
+                    .eq(SysUser::getUsername, username)
+                    .ne(SysUser::getId, id));
+            if (nameCnt != null && nameCnt > 0) {
+                throw BizException.conflict("学号 " + username + " 已被其他账号占用");
+            }
+            patch.setUsername(username);
+        }
         if (body.containsKey("nickname")) {
             String nickname = text(body.get("nickname"));
             if (!StringUtils.hasText(nickname)) {
                 throw BizException.badRequest("姓名不能为空");
             }
             patch.setNickname(nickname);
+        }
+        // 重置密码：仅在传了非空新密码时更新，加密后落库（旧密码不回显、不校验）
+        if (body.containsKey("password")) {
+            String rawPassword = body.get("password") == null ? "" : String.valueOf(body.get("password"));
+            if (StringUtils.hasText(rawPassword)) {
+                if (rawPassword.length() < 6 || rawPassword.length() > 32) {
+                    throw BizException.badRequest("密码长度需为 6-32 位");
+                }
+                patch.setPassword(encoder.encode(rawPassword));
+            }
         }
         if (body.containsKey("phone")) {
             patch.setPhone(text(body.get("phone")));
